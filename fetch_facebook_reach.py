@@ -282,7 +282,6 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
         "engaged_users": 0,
         "engagements": 0,
         "reactions": 0,
-        "clicks": 0,
         "reactions_details": {},  # Lagra detaljerade reaktionsdata
         "status": "OK",           # Defaultstatus
         "comment": ""             # Plats för ytterligare information om felet
@@ -301,8 +300,7 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     metrics_mapping = [
         {"api_name": "page_impressions_unique", "result_key": "reach", "display_name": "Räckvidd"},
         {"api_name": "page_post_engagements", "result_key": "engagements", "display_name": "Interaktioner"},
-        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"},
-        {"api_name": "page_consumptions", "result_key": "clicks", "display_name": "Klick"}
+        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"}
     ]
     
     api_errors = []  # Samla fel från API-anrop
@@ -362,7 +360,7 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     if api_errors:
         result["status"] = "API_ERROR"
         result["comment"] = "; ".join(api_errors[:3])  # Begränsa längden på kommentaren
-    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions", "clicks"]):
+    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions"]):
         result["status"] = "NO_DATA"
         result["comment"] = "Alla värden är noll"
     
@@ -397,8 +395,6 @@ def read_existing_csv(filename):
                             except ValueError:
                                 # Om det är ett dictionary eller annat format som inte kan konverteras
                                 page_data["Reactions"] = 0
-                        if "Clicks" in row:
-                            page_data["Clicks"] = int(row.get("Clicks", 0))
                         
                         # Hantera statusfält om det finns
                         if "Status" in row:
@@ -463,7 +459,6 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                         "Engaged Users": metrics["engaged_users"],
                         "Engagements": metrics["engagements"],
                         "Reactions": metrics["reactions"],
-                        "Clicks": metrics["clicks"],
                         "Status": metrics["status"],            # Lägg till status i resultatet
                         "Comment": metrics.get("comment", "")   # Lägg till eventuell kommentar
                     }
@@ -485,7 +480,6 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                         "Engaged Users": 0,
                         "Engagements": 0,
                         "Reactions": 0,
-                        "Clicks": 0,
                         "Status": "UNKNOWN",
                         "Comment": "Oväntat fel vid hämtning av data"
                     })
@@ -541,8 +535,6 @@ def save_results(data, filename):
                 fieldnames.append("Engagements")
             if "Reactions" in sorted_data[0]:
                 fieldnames.append("Reactions")
-            if "Clicks" in sorted_data[0]:
-                fieldnames.append("Clicks")
             # Lägg till Status och Comment om de finns
             if "Status" in sorted_data[0]:
                 fieldnames.append("Status")
@@ -753,7 +745,6 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
-            has_clicks = any("Clicks" in item for item in all_data)
             
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
@@ -769,11 +760,6 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
                 total_reactions = sum(safe_int_value(item.get("Reactions", 0)) for item in all_data)
             else:
                 total_reactions = 0
-                
-            if has_clicks:
-                total_clicks = sum(safe_int_value(item.get("Clicks", 0)) for item in all_data)
-            else:
-                total_clicks = 0
             
             logger.info(f"📈 Summering för {year}-{month:02d}:")
             logger.info(f"  - Total räckvidd: {total_reach:,}")
@@ -784,8 +770,6 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
                 logger.info(f"  - Totala interaktioner: {total_engagements:,}")
             if has_reactions:
                 logger.info(f"  - Reaktioner: {total_reactions:,}")
-            if has_clicks:
-                logger.info(f"  - Klick: {total_clicks:,}")
             
             if skipped > 0:
                 logger.info(f"📈 {skipped} sidor fanns redan i CSV-filen och hoppades över")
