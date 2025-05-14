@@ -1,0 +1,3 @@
+# Ignorera Python cache-mappar
+__pycache__/
+
