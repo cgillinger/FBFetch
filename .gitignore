@@ -99,9 +99,14 @@ venv.bak/
 logs/
 log/
 
-# CSV-data (valfritt - ta bort kommentarer om du vill synka CSV-filerna)
-# *.csv
-# FB_*.csv
+# CSV-data och Excel-filer
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+FB_*.csv
+csv_export/
 
 # Cache-filer
 page_names.json
