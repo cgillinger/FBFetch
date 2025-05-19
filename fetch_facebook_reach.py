@@ -282,6 +282,7 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
         "engaged_users": 0,
         "engagements": 0,
         "reactions": 0,
+        "clicks": 0,
         "reactions_details": {},  # Lagra detaljerade reaktionsdata
         "status": "OK",           # Defaultstatus
         "comment": ""             # Plats för ytterligare information om felet
@@ -300,7 +301,8 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     metrics_mapping = [
         {"api_name": "page_impressions_unique", "result_key": "reach", "display_name": "Räckvidd"},
         {"api_name": "page_post_engagements", "result_key": "engagements", "display_name": "Interaktioner"},
-        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"}
+        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"},
+        {"api_name": "page_consumptions", "result_key": "clicks", "display_name": "Klick"}
     ]
     
     api_errors = []  # Samla fel från API-anrop
@@ -360,7 +362,7 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     if api_errors:
         result["status"] = "API_ERROR"
         result["comment"] = "; ".join(api_errors[:3])  # Begränsa längden på kommentaren
-    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions"]):
+    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions", "clicks"]):
         result["status"] = "NO_DATA"
         result["comment"] = "Alla värden är noll"
     
@@ -395,6 +397,8 @@ def read_existing_csv(filename):
                             except ValueError:
                                 # Om det är ett dictionary eller annat format som inte kan konverteras
                                 page_data["Reactions"] = 0
+                        if "Clicks" in row:
+                            page_data["Clicks"] = int(row.get("Clicks", 0))
                         
                         # Hantera statusfält om det finns
                         if "Status" in row:
@@ -459,6 +463,7 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                         "Engaged Users": metrics["engaged_users"],
                         "Engagements": metrics["engagements"],
                         "Reactions": metrics["reactions"],
+                        "Clicks": metrics["clicks"],
                         "Status": metrics["status"],            # Lägg till status i resultatet
                         "Comment": metrics.get("comment", "")   # Lägg till eventuell kommentar
                     }
@@ -480,6 +485,7 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                         "Engaged Users": 0,
                         "Engagements": 0,
                         "Reactions": 0,
+                        "Clicks": 0,
                         "Status": "UNKNOWN",
                         "Comment": "Oväntat fel vid hämtning av data"
                     })
@@ -535,6 +541,8 @@ def save_results(data, filename):
                 fieldnames.append("Engagements")
             if "Reactions" in sorted_data[0]:
                 fieldnames.append("Reactions")
+            if "Clicks" in sorted_data[0]:
+                fieldnames.append("Clicks")
             # Lägg till Status och Comment om de finns
             if "Status" in sorted_data[0]:
                 fieldnames.append("Status")
@@ -658,17 +666,6 @@ def analyze_page_presence(previous_month, current_month):
             "Kommentar": "Fanns i föregående månad"
         })
     
-    # Lägg till oförändrade sidor (valfritt, kan bli många)
-    # for page_id in unchanged_page_ids:
-    #     page_info = curr_df[curr_df["Page ID"].astype(str) == page_id].iloc[0]
-    #     results.append({
-    #         "Page ID": page_id,
-    #         "Page": page_info["Page"],
-    #         "Status": "OFÖRÄNDRAD",
-    #         "Månad": month_str,
-    #         "Kommentar": ""
-    #     })
-    
     # Lägg till statusuppdateringar för nuvarande månad
     for _, row in curr_df.iterrows():
         page_id = str(row["Page ID"])
@@ -698,6 +695,162 @@ def save_status_report(status_df, year, month):
         return True
     except Exception as e:
         logger.error(f"❌ Kunde inte spara statusrapport: {e}")
+        return False
+
+def generate_custom_filename(start_date, end_date):
+    """Generera filnamn för custom datumintervall"""
+    start_obj = datetime.strptime(start_date, "%Y-%m-%d")
+    end_obj = datetime.strptime(end_date, "%Y-%m-%d")
+    
+    # Om start och slut är inom samma månad
+    if start_obj.month == end_obj.month and start_obj.year == end_obj.year:
+        if start_obj.day == 1 and end_obj == datetime(end_obj.year, end_obj.month, monthrange(end_obj.year, end_obj.month)[1]):
+            # Hel månad
+            return f"FB_{start_obj.year}_{start_obj.month:02d}.csv"
+        else:
+            # Partiell månad
+            return f"FB_{start_obj.year}_{start_obj.month:02d}_{start_obj.day:02d}-{end_obj.day:02d}.csv"
+    else:
+        # Över månader eller år
+        return f"FB_{start_obj.strftime('%Y-%m-%d')}_to_{end_obj.strftime('%Y-%m-%d')}.csv"
+
+def parse_date_args(args):
+    """Tolka kommandoradsargument för datumintervall och returnera (start_date, end_date)"""
+    today = datetime.now().date()
+    
+    # Custom datum från argumenten
+    if args.from_date and args.to_date:
+        try:
+            start_date = datetime.strptime(args.from_date, "%Y-%m-%d").date()
+            end_date = datetime.strptime(args.to_date, "%Y-%m-%d").date()
+            return str(start_date), str(end_date)
+        except ValueError:
+            logger.error("Felaktigt datumformat. Använd YYYY-MM-DD")
+            sys.exit(1)
+    
+    # Nuvarande månad hittills
+    if args.current_month_so_far:
+        start_date = today.replace(day=1)  # Första dagen i månaden
+        end_date = today
+        return str(start_date), str(end_date)
+    
+    # Senaste N dagar
+    if args.last_n_days:
+        try:
+            days = int(args.last_n_days)
+            start_date = today - timedelta(days=days-1)  # -1 eftersom vi inkluderar idag
+            end_date = today
+            return str(start_date), str(end_date)
+        except ValueError:
+            logger.error("--last-n-days måste vara ett heltal")
+            sys.exit(1)
+    
+    # Senaste veckan
+    if args.last_week:
+        start_date = today - timedelta(days=6)  # Inkluderar idag
+        end_date = today
+        return str(start_date), str(end_date)
+    
+    # Senaste månaden (30 dagar)
+    if args.last_month:
+        start_date = today - timedelta(days=29)  # Inkluderar idag
+        end_date = today
+        return str(start_date), str(end_date)
+    
+    return None, None
+
+def process_custom_period(start_date, end_date, cache, page_list=None, update_all=False):
+    """Bearbeta data för ett custom datumintervall"""
+    logger.info(f"Bearbetar custom period: {start_date} till {end_date}")
+    
+    # Generera filnamn för custom period
+    output_file = generate_custom_filename(start_date, end_date)
+    
+    # Hämta sidlista om den inte redan hämtats
+    if not page_list:
+        page_list = get_page_ids_with_access(ACCESS_TOKEN)
+    
+    if not page_list:
+        logger.error("❌ Inga sidor hittades. Avbryter.")
+        return False
+    
+    # Kontrollera om det finns befintlig data för denna period
+    existing_data = {}
+    if os.path.exists(output_file) and not update_all:
+        existing_data = read_existing_csv(output_file)
+        logger.info(f"Hittade {len(existing_data)} befintliga sidor i fil {output_file}")
+    
+    # Bearbeta data för denna period
+    all_data, ok, fail, skipped = process_in_batches(page_list, cache, start_date, end_date, 
+                                                  existing_data=None if update_all else existing_data)
+    
+    # Spara resultaten
+    if all_data:
+        save_results(all_data, output_file)
+        
+        # Visa total räckvidd och interaktioner
+        try:
+            total_reach = sum(safe_int_value(item.get("Reach", 0)) for item in all_data)
+            
+            # Beräkna totaler för interaktioner om tillgängligt
+            has_engaged = any("Engaged Users" in item for item in all_data)
+            has_engagements = any("Engagements" in item for item in all_data)
+            has_reactions = any("Reactions" in item for item in all_data)
+            has_clicks = any("Clicks" in item for item in all_data)
+            
+            if has_engaged:
+                total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
+            else:
+                total_engaged = 0
+                
+            if has_engagements:
+                total_engagements = sum(safe_int_value(item.get("Engagements", 0)) for item in all_data)
+            else:
+                total_engagements = 0
+                
+            if has_reactions:
+                total_reactions = sum(safe_int_value(item.get("Reactions", 0)) for item in all_data)
+            else:
+                total_reactions = 0
+                
+            if has_clicks:
+                total_clicks = sum(safe_int_value(item.get("Clicks", 0)) for item in all_data)
+            else:
+                total_clicks = 0
+            
+            logger.info(f"📈 Summering för {start_date} till {end_date}:")
+            logger.info(f"  - Total räckvidd: {total_reach:,}")
+            
+            if has_engaged:
+                logger.info(f"  - Engagerade användare: {total_engaged:,}")
+            if has_engagements:
+                logger.info(f"  - Totala interaktioner: {total_engagements:,}")
+            if has_reactions:
+                logger.info(f"  - Reaktioner: {total_reactions:,}")
+            if has_clicks:
+                logger.info(f"  - Klick: {total_clicks:,}")
+            
+            if skipped > 0:
+                logger.info(f"📈 {skipped} sidor fanns redan i CSV-filen och hoppades över")
+                
+            # Statusrapport
+            status_counts = {}
+            for item in all_data:
+                if "Status" in item:
+                    status = item["Status"]
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            
+            if status_counts:
+                logger.info(f"📋 Statusöversikt:")
+                for status, count in status_counts.items():
+                    logger.info(f"  - {status}: {count} sidor")
+        
+        except Exception as e:
+            logger.error(f"Fel vid beräkning av summor: {e}")
+        
+        return True
+    else:
+        logger.warning(f"⚠️ Inga data att spara för {start_date} till {end_date}")
         return False
 
 def process_month(year, month, cache, page_list=None, update_all=False, generate_status=True):
@@ -745,6 +898,7 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
+            has_clicks = any("Clicks" in item for item in all_data)
             
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
@@ -760,6 +914,11 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
                 total_reactions = sum(safe_int_value(item.get("Reactions", 0)) for item in all_data)
             else:
                 total_reactions = 0
+                
+            if has_clicks:
+                total_clicks = sum(safe_int_value(item.get("Clicks", 0)) for item in all_data)
+            else:
+                total_clicks = 0
             
             logger.info(f"📈 Summering för {year}-{month:02d}:")
             logger.info(f"  - Total räckvidd: {total_reach:,}")
@@ -770,6 +929,8 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
                 logger.info(f"  - Totala interaktioner: {total_engagements:,}")
             if has_reactions:
                 logger.info(f"  - Reaktioner: {total_reactions:,}")
+            if has_clicks:
+                logger.info(f"  - Klick: {total_clicks:,}")
             
             if skipped > 0:
                 logger.info(f"📈 {skipped} sidor fanns redan i CSV-filen och hoppades över")
@@ -811,18 +972,54 @@ def main():
     """Huvudfunktion för att köra hela processen"""
     # Parsa kommandoradsargument
     parser = argparse.ArgumentParser(description="Generera Facebook-räckviddsrapport för alla sidor och månader")
-    parser.add_argument("--start", help="Startår-månad (YYYY-MM)")
-    parser.add_argument("--month", help="Kör endast för angiven månad (YYYY-MM)")
-    parser.add_argument("--update-all", action="store_true", help="Uppdatera alla sidor även om de redan finns i CSV-filen")
-    parser.add_argument("--check-new", action="store_true", help="Kontrollera efter nya sidor i alla befintliga månader")
-    parser.add_argument("--status", help="Generera endast statusrapport för angiven månad (YYYY-MM)")
-    parser.add_argument("--debug", action="store_true", help="Aktivera debug-loggning")
+    
+    # Datum-grupp för månader
+    date_group = parser.add_argument_group("Datumargument för månader")
+    date_group.add_argument("--start", help="Startår-månad (YYYY-MM)")
+    date_group.add_argument("--month", help="Kör endast för angiven månad (YYYY-MM)")
+    
+    # Custom datumintervall
+    custom_group = parser.add_argument_group("Custom datumintervall")
+    custom_group.add_argument("--from", dest="from_date", help="Custom startdatum (YYYY-MM-DD)")
+    custom_group.add_argument("--to", dest="to_date", help="Custom slutdatum (YYYY-MM-DD)")
+    custom_group.add_argument("--current-month-so-far", action="store_true", 
+                            help="Hämta data från 1:a i månaden till idag")
+    custom_group.add_argument("--last-n-days", type=int, metavar="N",
+                            help="Hämta data för senaste N dagar (inklusive idag)")
+    custom_group.add_argument("--last-week", action="store_true", 
+                            help="Hämta data för senaste 7 dagar (inklusive idag)")
+    custom_group.add_argument("--last-month", action="store_true", 
+                            help="Hämta data för senaste 30 dagar (inklusive idag)")
+    
+    # Operationsmodifikatorer
+    ops_group = parser.add_argument_group("Operationsmodifikatorer")
+    ops_group.add_argument("--update-all", action="store_true", 
+                          help="Uppdatera alla sidor även om de redan finns i CSV-filen")
+    ops_group.add_argument("--check-new", action="store_true", 
+                          help="Kontrollera efter nya sidor i alla befintliga månader")
+    ops_group.add_argument("--status", 
+                          help="Generera endast statusrapport för angiven månad (YYYY-MM)")
+    ops_group.add_argument("--debug", action="store_true", 
+                          help="Aktivera debug-loggning")
+    
     args = parser.parse_args()
     
     # Sätt debug-läge om begärt
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.debug("Debug-läge aktiverat")
+    
+    # Kontrollera för inkompatibla argumentkombinationer
+    date_args_count = sum([
+        bool(args.start), bool(args.month), bool(args.from_date and args.to_date),
+        args.current_month_so_far, bool(args.last_n_days), args.last_week, args.last_month,
+        args.check_new, bool(args.status)
+    ])
+    
+    if date_args_count > 1:
+        logger.error("❌ Endast ett datumargument kan användas åt gången")
+        parser.print_help()
+        sys.exit(1)
     
     # Använd argument om de finns
     start_year_month = args.start or INITIAL_START_YEAR_MONTH
@@ -874,11 +1071,19 @@ def main():
             logger.error(f"❌ Fel vid generering av statusrapport: {e}")
             return
     
-    # Hämta alla tillgängliga sidor (en gång för alla månader)
+    # Hämta alla tillgängliga sidor (en gång för alla körningar)
     page_list = get_page_ids_with_access(ACCESS_TOKEN)
     
     if not page_list:
         logger.error("❌ Inga sidor hittades. Avbryter.")
+        return
+    
+    # Hantera custom datumintervall
+    start_date, end_date = parse_date_args(args)
+    if start_date and end_date:
+        logger.info(f"🗓️ Kör för custom datumintervall: {start_date} till {end_date}")
+        process_custom_period(start_date, end_date, cache, page_list, update_all=args.update_all)
+        save_page_cache(cache)
         return
     
     # Om check-new-argument, kontrollera alla befintliga månader efter nya sidor

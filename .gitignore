@@ -1,3 +1,163 @@
-# Ignorera Python cache-mappar
-__pycache__/
+# .gitignore för Facebook Reach Script
 
+# ======================
+# KÄNSLIG KONFIGURATION
+# ======================
+config.py              # Innehåller access token - ska ALDRIG synkas
+*.token                 # Alla token-filer
+*.key                   # Nyckelfiler
+secrets.json            # Eventuella secrets-filer
+
+# ======================
+# WINDOWS-SPECIFIKA FILER
+# ======================
+# Zone Identifier-filer (skapas när filer laddas ner i Windows)
+*:Zone.Identifier
+*.Zone.Identifier
+*:Zone.Identifier:*
+
+# Windows thumbnail cache files
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+
+# Windows Installer files
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+
+# Windows shortcuts
+*.lnk
+
+# ======================
+# PYTHON-SPECIFIKA FILER
+# ======================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ======================
+# PROJEKTSPECIFIKA FILER
+# ======================
+# Loggfiler
+*.log
+logs/
+log/
+
+# CSV-data (valfritt - ta bort kommentarer om du vill synka CSV-filerna)
+# *.csv
+# FB_*.csv
+
+# Cache-filer
+page_names.json
+*.cache
+
+# Backup-filer
+*.bak
+*.backup
+*.old
+*.orig
+
+# Temporära filer
+*.tmp
+*.temp
+~*
+
+# ======================
+# EDITOR/IDE-FILER
+# ======================
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ======================
+# OPERATIVSYSTEM
+# ======================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# ======================
+# GIT-SPECIFIKA
+# ======================
+# Git merge conflict files
+*.orig
