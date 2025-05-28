@@ -1,9 +1,4 @@
 # fetch_facebook_reach.py
-# Version 2.7 - Dynamisk rate limit-hantering
-# 
-# Detta skript använder nu dynamisk rate limit-hantering som automatiskt
-# anpassar sig till Facebook's faktiska API-gränser. Det börjar snabbt
-# och saktar bara ner när faktiska rate limits träffas.
 
 import csv
 import json
@@ -57,12 +52,9 @@ def setup_logging():
 # Konfigurera loggning med datumstämplad fil
 logger = setup_logging()
 
-# Räknare för API-anrop och rate limit-hantering
+# Räknare för API-anrop
 api_call_count = 0
 start_time = time.time()
-last_rate_limit_time = None
-rate_limit_backoff = 1.0  # Dynamisk backoff-multiplikator
-consecutive_successes = 0  # Räkna lyckade anrop för att minska backoff
 
 def check_token_expiry():
     """Kontrollera om token snart går ut och varna användaren"""
@@ -102,16 +94,18 @@ def save_page_cache(cache):
         logger.error(f"Kunde inte spara cache: {e}")
 
 def api_request(url, params, retries=MAX_RETRIES):
-    """Gör API-förfrågan med dynamisk rate limit-hantering"""
-    global api_call_count, last_rate_limit_time, rate_limit_backoff, consecutive_successes
+    """Gör API-förfrågan med återförsök och rate limit-hantering"""
+    global api_call_count
     
-    # Om vi nyligen träffade rate limit, vänta lite baserat på backoff
-    if last_rate_limit_time:
-        time_since_limit = time.time() - last_rate_limit_time
-        if time_since_limit < (60 * rate_limit_backoff):  # Dynamisk väntetid
-            wait_time = (60 * rate_limit_backoff) - time_since_limit
-            logger.info(f"⏳ Väntar {wait_time:.1f}s efter tidigare rate limit (backoff: {rate_limit_backoff:.1f}x)")
-            time.sleep(wait_time)
+    # Kontrollera om vi närmar oss rate limit
+    current_time = time.time()
+    elapsed_hours = (current_time - start_time) / 3600
+    rate = api_call_count / elapsed_hours if elapsed_hours > 0 else 0
+    
+    if rate > MAX_REQUESTS_PER_HOUR * 0.9:  # Om vi använt 90% av rate limit
+        wait_time = 3600 / MAX_REQUESTS_PER_HOUR  # Vänta tillräckligt för att hålla oss under gränsen
+        logger.warning(f"Närmar oss rate limit ({int(rate)}/h). Väntar {wait_time:.1f} sekunder...")
+        time.sleep(wait_time)
     
     for attempt in range(retries):
         try:
@@ -120,18 +114,14 @@ def api_request(url, params, retries=MAX_RETRIES):
             
             # Hantera vanliga HTTP-fel
             if response.status_code == 429:  # Too Many Requests
-                last_rate_limit_time = time.time()
-                rate_limit_backoff = min(rate_limit_backoff * 1.5, 10.0)  # Öka backoff, max 10x
-                consecutive_successes = 0  # Återställ räknaren
-                
-                retry_after = int(response.headers.get('Retry-After', 60 * rate_limit_backoff))
-                logger.warning(f"🛑 Rate limit nått! Väntar {retry_after}s (backoff: {rate_limit_backoff:.1f}x)")
+                retry_after = int(response.headers.get('Retry-After', RETRY_DELAY))
+                logger.warning(f"Rate limit nått! Väntar {retry_after} sekunder... (försök {attempt+1}/{retries})")
                 time.sleep(retry_after)
                 continue
                 
             elif response.status_code >= 500:  # Server error
-                wait_time = min(RETRY_DELAY * (2 ** attempt), 30)  # Max 30 sekunder
-                logger.warning(f"Serverfel: {response.status_code}. Väntar {wait_time}s... (försök {attempt+1}/{retries})")
+                wait_time = RETRY_DELAY * (2 ** attempt)  # Exponentiell backoff
+                logger.warning(f"Serverfel: {response.status_code}. Väntar {wait_time} sekunder... (försök {attempt+1}/{retries})")
                 time.sleep(wait_time)
                 continue
             
@@ -146,10 +136,8 @@ def api_request(url, params, retries=MAX_RETRIES):
                     
                     # Hantera specifika felkoder
                     if error_code == 4:  # App-specifikt rate limit
-                        last_rate_limit_time = time.time()
-                        rate_limit_backoff = min(rate_limit_backoff * 1.5, 10.0)
-                        wait_time = min(60 * rate_limit_backoff, 300)  # Max 5 minuter
-                        logger.warning(f"App rate limit: {error_msg}. Väntar {wait_time}s...")
+                        wait_time = 60 * (attempt + 1)  # Vänta längre för varje försök
+                        logger.warning(f"App rate limit: {error_msg}. Väntar {wait_time} sekunder...")
                         time.sleep(wait_time)
                         continue
                         
@@ -172,20 +160,6 @@ def api_request(url, params, retries=MAX_RETRIES):
                     return json_data
                 
                 # Allt gick bra, returnera data
-                consecutive_successes += 1
-                
-                # Minska backoff gradvis efter många lyckade anrop
-                if consecutive_successes >= 50 and rate_limit_backoff > 1.0:
-                    rate_limit_backoff = max(rate_limit_backoff * 0.8, 1.0)
-                    logger.debug(f"✅ 50 lyckade anrop, minskar backoff till {rate_limit_backoff:.1f}x")
-                    consecutive_successes = 0
-                
-                # Visa progress var 100:e anrop
-                if api_call_count % 100 == 0:
-                    elapsed = time.time() - start_time
-                    current_rate = api_call_count / (elapsed / 3600) if elapsed > 0 else 0
-                    logger.info(f"📊 Progress: {api_call_count} API-anrop, {current_rate:.0f}/h")
-                
                 return json_data
                 
             except json.JSONDecodeError:
@@ -1264,9 +1238,8 @@ def main():
     # Använd argument om de finns
     start_year_month = args.start or INITIAL_START_YEAR_MONTH
     
-    logger.info(f"📊 Facebook Reach & Interactions Report Generator – v2.7")
+    logger.info(f"📊 Facebook Reach & Interactions Report Generator – v2.6")
     logger.info(f"Startdatum: {start_year_month}")
-    logger.info("Dynamisk rate limit-hantering aktiverad 🚀")
     logger.info("-------------------------------------------------------------------")
     
     # Kontrollera token och varna om den snart går ut
@@ -1389,25 +1362,15 @@ def main():
         else:
             logger.info(f"✅ Slutförde bearbetningen för {year}-{month:02d}")
         
-        # Pausa kort mellan månader endast om vi har haft rate limit-problem
+        # Pausa för att respektera API-begränsningar om det finns fler månader att bearbeta
         if missing_months.index((year, month)) < len(missing_months) - 1:
-            if rate_limit_backoff > 1.5:
-                pause_time = min(MONTH_PAUSE_SECONDS, 30)  # Max 30 sekunder även om konfigurerat högre
-                logger.info(f"Pausar i {pause_time} sekunder mellan månader (pga tidigare rate limits)...")
-                time.sleep(pause_time)
-            else:
-                logger.info("Fortsätter direkt till nästa månad (inga rate limit-problem)...")
+            logger.info(f"Pausar i {MONTH_PAUSE_SECONDS} sekunder för att respektera API-begränsningar...")
+            time.sleep(MONTH_PAUSE_SECONDS)
     
     # Visa statistik om API-användning
     elapsed_time = time.time() - start_time
-    avg_rate = api_call_count / (elapsed_time / 3600) if elapsed_time > 0 else 0
     logger.info(f"⏱️ Total körtid: {elapsed_time:.1f} sekunder")
-    logger.info(f"🌐 API-anrop: {api_call_count} totalt")
-    logger.info(f"📈 Genomsnittlig hastighet: {avg_rate:.0f} anrop/timme")
-    if rate_limit_backoff > 1.0:
-        logger.info(f"⚡ Slutlig backoff: {rate_limit_backoff:.1f}x (träffade rate limits under körningen)")
-    else:
-        logger.info(f"✨ Inga rate limits träffades - maximal hastighet använd!")
+    logger.info(f"🌐 API-anrop: {api_call_count} ({api_call_count/elapsed_time*3600:.1f}/timme)")
     logger.info(f"✅ Klar! Bearbetade {len(missing_months)} månader")
 
 if __name__ == "__main__":

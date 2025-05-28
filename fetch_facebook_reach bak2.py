@@ -1,9 +1,4 @@
 # fetch_facebook_reach.py
-# Version 2.7 - Dynamisk rate limit-hantering
-# 
-# Detta skript använder nu dynamisk rate limit-hantering som automatiskt
-# anpassar sig till Facebook's faktiska API-gränser. Det börjar snabbt
-# och saktar bara ner när faktiska rate limits träffas.
 
 import csv
 import json
@@ -57,12 +52,9 @@ def setup_logging():
 # Konfigurera loggning med datumstämplad fil
 logger = setup_logging()
 
-# Räknare för API-anrop och rate limit-hantering
+# Räknare för API-anrop
 api_call_count = 0
 start_time = time.time()
-last_rate_limit_time = None
-rate_limit_backoff = 1.0  # Dynamisk backoff-multiplikator
-consecutive_successes = 0  # Räkna lyckade anrop för att minska backoff
 
 def check_token_expiry():
     """Kontrollera om token snart går ut och varna användaren"""
@@ -102,16 +94,18 @@ def save_page_cache(cache):
         logger.error(f"Kunde inte spara cache: {e}")
 
 def api_request(url, params, retries=MAX_RETRIES):
-    """Gör API-förfrågan med dynamisk rate limit-hantering"""
-    global api_call_count, last_rate_limit_time, rate_limit_backoff, consecutive_successes
+    """Gör API-förfrågan med återförsök och rate limit-hantering"""
+    global api_call_count
     
-    # Om vi nyligen träffade rate limit, vänta lite baserat på backoff
-    if last_rate_limit_time:
-        time_since_limit = time.time() - last_rate_limit_time
-        if time_since_limit < (60 * rate_limit_backoff):  # Dynamisk väntetid
-            wait_time = (60 * rate_limit_backoff) - time_since_limit
-            logger.info(f"⏳ Väntar {wait_time:.1f}s efter tidigare rate limit (backoff: {rate_limit_backoff:.1f}x)")
-            time.sleep(wait_time)
+    # Kontrollera om vi närmar oss rate limit
+    current_time = time.time()
+    elapsed_hours = (current_time - start_time) / 3600
+    rate = api_call_count / elapsed_hours if elapsed_hours > 0 else 0
+    
+    if rate > MAX_REQUESTS_PER_HOUR * 0.9:  # Om vi använt 90% av rate limit
+        wait_time = 3600 / MAX_REQUESTS_PER_HOUR  # Vänta tillräckligt för att hålla oss under gränsen
+        logger.warning(f"Närmar oss rate limit ({int(rate)}/h). Väntar {wait_time:.1f} sekunder...")
+        time.sleep(wait_time)
     
     for attempt in range(retries):
         try:
@@ -120,18 +114,14 @@ def api_request(url, params, retries=MAX_RETRIES):
             
             # Hantera vanliga HTTP-fel
             if response.status_code == 429:  # Too Many Requests
-                last_rate_limit_time = time.time()
-                rate_limit_backoff = min(rate_limit_backoff * 1.5, 10.0)  # Öka backoff, max 10x
-                consecutive_successes = 0  # Återställ räknaren
-                
-                retry_after = int(response.headers.get('Retry-After', 60 * rate_limit_backoff))
-                logger.warning(f"🛑 Rate limit nått! Väntar {retry_after}s (backoff: {rate_limit_backoff:.1f}x)")
+                retry_after = int(response.headers.get('Retry-After', RETRY_DELAY))
+                logger.warning(f"Rate limit nått! Väntar {retry_after} sekunder... (försök {attempt+1}/{retries})")
                 time.sleep(retry_after)
                 continue
                 
             elif response.status_code >= 500:  # Server error
-                wait_time = min(RETRY_DELAY * (2 ** attempt), 30)  # Max 30 sekunder
-                logger.warning(f"Serverfel: {response.status_code}. Väntar {wait_time}s... (försök {attempt+1}/{retries})")
+                wait_time = RETRY_DELAY * (2 ** attempt)  # Exponentiell backoff
+                logger.warning(f"Serverfel: {response.status_code}. Väntar {wait_time} sekunder... (försök {attempt+1}/{retries})")
                 time.sleep(wait_time)
                 continue
             
@@ -146,10 +136,8 @@ def api_request(url, params, retries=MAX_RETRIES):
                     
                     # Hantera specifika felkoder
                     if error_code == 4:  # App-specifikt rate limit
-                        last_rate_limit_time = time.time()
-                        rate_limit_backoff = min(rate_limit_backoff * 1.5, 10.0)
-                        wait_time = min(60 * rate_limit_backoff, 300)  # Max 5 minuter
-                        logger.warning(f"App rate limit: {error_msg}. Väntar {wait_time}s...")
+                        wait_time = 60 * (attempt + 1)  # Vänta längre för varje försök
+                        logger.warning(f"App rate limit: {error_msg}. Väntar {wait_time} sekunder...")
                         time.sleep(wait_time)
                         continue
                         
@@ -172,20 +160,6 @@ def api_request(url, params, retries=MAX_RETRIES):
                     return json_data
                 
                 # Allt gick bra, returnera data
-                consecutive_successes += 1
-                
-                # Minska backoff gradvis efter många lyckade anrop
-                if consecutive_successes >= 50 and rate_limit_backoff > 1.0:
-                    rate_limit_backoff = max(rate_limit_backoff * 0.8, 1.0)
-                    logger.debug(f"✅ 50 lyckade anrop, minskar backoff till {rate_limit_backoff:.1f}x")
-                    consecutive_successes = 0
-                
-                # Visa progress var 100:e anrop
-                if api_call_count % 100 == 0:
-                    elapsed = time.time() - start_time
-                    current_rate = api_call_count / (elapsed / 3600) if elapsed > 0 else 0
-                    logger.info(f"📊 Progress: {api_call_count} API-anrop, {current_rate:.0f}/h")
-                
                 return json_data
                 
             except json.JSONDecodeError:
@@ -395,7 +369,8 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
         "engaged_users": 0,
         "engagements": 0,
         "reactions": 0,
-        "publications": 0,      # Antal publiceringar
+        "clicks": 0,
+        "publications": 0,      # Ny: antal publiceringar
         "reactions_details": {},  # Lagra detaljerade reaktionsdata
         "status": "OK",           # Defaultstatus
         "comment": ""             # Plats för ytterligare information om felet
@@ -414,11 +389,11 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     result["publications"] = get_page_publications(page_id, page_token, since, until, page_name)
     
     # Definition av metriker och deras mappning
-    # BORTTAGET: page_consumptions eftersom den är deprecated sedan september 2024
     metrics_mapping = [
         {"api_name": "page_impressions_unique", "result_key": "reach", "display_name": "Räckvidd"},
         {"api_name": "page_post_engagements", "result_key": "engagements", "display_name": "Interaktioner"},
-        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"}
+        {"api_name": "page_actions_post_reactions_total", "result_key": "reactions", "display_name": "Reaktioner"},
+        {"api_name": "page_consumptions", "result_key": "clicks", "display_name": "Klick"}
     ]
     
     api_errors = []  # Samla fel från API-anrop
@@ -478,7 +453,7 @@ def get_page_metrics(page_id, system_token, since, until, page_name=None):
     if api_errors:
         result["status"] = "API_ERROR"
         result["comment"] = "; ".join(api_errors[:3])  # Begränsa längden på kommentaren
-    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions", "publications"]):
+    elif all(result[key] == 0 for key in ["reach", "engaged_users", "engagements", "reactions", "clicks", "publications"]):
         result["status"] = "NO_DATA"
         result["comment"] = "Alla värden är noll"
     
@@ -496,10 +471,10 @@ def read_existing_csv(filename):
                 reader = csv.DictReader(f)
                 fieldnames = reader.fieldnames or []
                 
-                # Definiera alla förväntade kolumner (Clicks är borttaget)
+                # Definiera alla förväntade kolumner
                 expected_columns = {
                     "Page", "Page ID", "Reach", "Engaged Users", "Engagements", 
-                    "Reactions", "Publications", "Status", "Comment"
+                    "Reactions", "Clicks", "Publications", "Status", "Comment"
                 }
                 
                 # Identifiera saknade kolumner
@@ -529,6 +504,8 @@ def read_existing_csv(filename):
                             except ValueError:
                                 # Om det är ett dictionary eller annat format som inte kan konverteras
                                 page_data["Reactions"] = 0
+                        if "Clicks" in row:
+                            page_data["Clicks"] = int(row.get("Clicks", 0))
                         
                         # Hantera Publications (ny kolumn)
                         if "Publications" in row:
@@ -639,6 +616,7 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                             "Engaged Users": metrics["engaged_users"],
                             "Engagements": metrics["engagements"],
                             "Reactions": metrics["reactions"],
+                            "Clicks": metrics["clicks"],
                             "Publications": metrics["publications"],
                             "Status": metrics["status"],
                             "Comment": metrics.get("comment", "")
@@ -655,6 +633,7 @@ def process_in_batches(page_list, cache, start_date, end_date, existing_data=Non
                             "Engaged Users": 0,
                             "Engagements": 0,
                             "Reactions": 0,
+                            "Clicks": 0,
                             "Publications": 0,
                             "Status": "UNKNOWN",
                             "Comment": "Oväntat fel vid hämtning av data"
@@ -750,8 +729,9 @@ def save_results(data, filename):
                 fieldnames.append("Engagements")
             if "Reactions" in sorted_data[0]:
                 fieldnames.append("Reactions")
-            # Clicks är borttaget eftersom metriken är deprecated
-            if "Publications" in sorted_data[0]:
+            if "Clicks" in sorted_data[0]:
+                fieldnames.append("Clicks")
+            if "Publications" in sorted_data[0]:  # Ny kolumn
                 fieldnames.append("Publications")
             # Lägg till Status och Comment om de finns
             if "Status" in sorted_data[0]:
@@ -1019,7 +999,8 @@ def process_custom_period(start_date, end_date, cache, page_list=None, update_al
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
-            has_publications = any("Publications" in item for item in all_data)
+            has_clicks = any("Clicks" in item for item in all_data)
+            has_publications = any("Publications" in item for item in all_data)  # Ny
             
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
@@ -1036,6 +1017,11 @@ def process_custom_period(start_date, end_date, cache, page_list=None, update_al
             else:
                 total_reactions = 0
                 
+            if has_clicks:
+                total_clicks = sum(safe_int_value(item.get("Clicks", 0)) for item in all_data)
+            else:
+                total_clicks = 0
+                
             if has_publications:
                 total_publications = sum(safe_int_value(item.get("Publications", 0)) for item in all_data)
             else:
@@ -1050,8 +1036,10 @@ def process_custom_period(start_date, end_date, cache, page_list=None, update_al
                 logger.info(f"  - Totala interaktioner: {total_engagements:,}")
             if has_reactions:
                 logger.info(f"  - Reaktioner: {total_reactions:,}")
+            if has_clicks:
+                logger.info(f"  - Klick: {total_clicks:,}")
             if has_publications:
-                logger.info(f"  - Publiceringar: {total_publications:,}")
+                logger.info(f"  - Publiceringar: {total_publications:,}")  # Ny
             
             if skipped > 0:
                 logger.info(f"📈 {skipped} sidor hoppades över")
@@ -1136,7 +1124,8 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
-            has_publications = any("Publications" in item for item in all_data)
+            has_clicks = any("Clicks" in item for item in all_data)
+            has_publications = any("Publications" in item for item in all_data)  # Ny
             
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
@@ -1153,6 +1142,11 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
             else:
                 total_reactions = 0
                 
+            if has_clicks:
+                total_clicks = sum(safe_int_value(item.get("Clicks", 0)) for item in all_data)
+            else:
+                total_clicks = 0
+                
             if has_publications:
                 total_publications = sum(safe_int_value(item.get("Publications", 0)) for item in all_data)
             else:
@@ -1167,8 +1161,10 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
                 logger.info(f"  - Totala interaktioner: {total_engagements:,}")
             if has_reactions:
                 logger.info(f"  - Reaktioner: {total_reactions:,}")
+            if has_clicks:
+                logger.info(f"  - Klick: {total_clicks:,}")
             if has_publications:
-                logger.info(f"  - Publiceringar: {total_publications:,}")
+                logger.info(f"  - Publiceringar: {total_publications:,}")  # Ny
             
             if skipped > 0:
                 logger.info(f"📈 {skipped} sidor hoppades över")
@@ -1264,9 +1260,8 @@ def main():
     # Använd argument om de finns
     start_year_month = args.start or INITIAL_START_YEAR_MONTH
     
-    logger.info(f"📊 Facebook Reach & Interactions Report Generator – v2.7")
+    logger.info(f"📊 Facebook Reach & Interactions Report Generator – v2.5")
     logger.info(f"Startdatum: {start_year_month}")
-    logger.info("Dynamisk rate limit-hantering aktiverad 🚀")
     logger.info("-------------------------------------------------------------------")
     
     # Kontrollera token och varna om den snart går ut
@@ -1389,25 +1384,15 @@ def main():
         else:
             logger.info(f"✅ Slutförde bearbetningen för {year}-{month:02d}")
         
-        # Pausa kort mellan månader endast om vi har haft rate limit-problem
+        # Pausa för att respektera API-begränsningar om det finns fler månader att bearbeta
         if missing_months.index((year, month)) < len(missing_months) - 1:
-            if rate_limit_backoff > 1.5:
-                pause_time = min(MONTH_PAUSE_SECONDS, 30)  # Max 30 sekunder även om konfigurerat högre
-                logger.info(f"Pausar i {pause_time} sekunder mellan månader (pga tidigare rate limits)...")
-                time.sleep(pause_time)
-            else:
-                logger.info("Fortsätter direkt till nästa månad (inga rate limit-problem)...")
+            logger.info(f"Pausar i {MONTH_PAUSE_SECONDS} sekunder för att respektera API-begränsningar...")
+            time.sleep(MONTH_PAUSE_SECONDS)
     
     # Visa statistik om API-användning
     elapsed_time = time.time() - start_time
-    avg_rate = api_call_count / (elapsed_time / 3600) if elapsed_time > 0 else 0
     logger.info(f"⏱️ Total körtid: {elapsed_time:.1f} sekunder")
-    logger.info(f"🌐 API-anrop: {api_call_count} totalt")
-    logger.info(f"📈 Genomsnittlig hastighet: {avg_rate:.0f} anrop/timme")
-    if rate_limit_backoff > 1.0:
-        logger.info(f"⚡ Slutlig backoff: {rate_limit_backoff:.1f}x (träffade rate limits under körningen)")
-    else:
-        logger.info(f"✨ Inga rate limits träffades - maximal hastighet använd!")
+    logger.info(f"🌐 API-anrop: {api_call_count} ({api_call_count/elapsed_time*3600:.1f}/timme)")
     logger.info(f"✅ Klar! Bearbetade {len(missing_months)} månader")
 
 if __name__ == "__main__":
