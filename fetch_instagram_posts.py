@@ -1066,7 +1066,7 @@ def process_account_posts_for_month(instagram_id, account_name, year, month, upd
     Denna konvention gör det enkelt för visualiseringsappar att tolka period från filnamn.
     
     Args:
-        instagram_id: Instagram Business Account ID
+        instagram_id: Instagram Business Account ID (numeriskt)
         account_name: Kontonamn (för loggning och CSV)
         year: År (YYYY)
         month: Månad (MM)
@@ -1095,8 +1095,8 @@ def process_account_posts_for_month(instagram_id, account_name, year, month, upd
             logger.info(f"  Inga posts hittades för @{account_name} under {year}-{month:02d}")
             return 0, 0, 0
         
-        # Bearbeta posts med insights
-        complete_posts = process_posts_with_insights(posts, account_name)
+        # Bearbeta posts med insights (FIXAD: Skicka instagram_id som instagram_account_id)
+        complete_posts = process_posts_with_insights(posts, account_name, instagram_id)
         
         if complete_posts:
             # Spara eller uppdatera CSV-fil
@@ -1125,7 +1125,7 @@ def save_posts_to_csv(posts_data, filename, account_name=None, update_existing=F
     Spara post-data till CSV-fil.
     
     CSV-STRUKTUR (i användarens specificerade ordning):
-    Account, Post_ID, Post_Date, Media_Type, Media_Product_Type, Caption_Preview,
+    Account, Instagram_ID, Post_ID, Post_Date, Media_Type, Media_Product_Type, Caption_Preview,
     Reach, Comments, Likes, Shares, Saved, Views, Status, Error_Message
     
     SORTERING: Posts grupperas per konto (A-Ö), sedan kronologiskt inom varje konto (äldst först).
@@ -1235,9 +1235,9 @@ def show_posts_summary(posts_data, account_name, year, month):
     Visa summering av post-data för loggning.
     
     SUMMERING INKLUDERAR:
-    - Totaler per metrik
+    - Totaler per metrik (bara summerbara metriker)
+    - Genomsnitt för unika metriker (reach, views)
     - Fördelning per post-typ
-    - Genomsnitt per post
     - Status-översikt
     """
     try:
@@ -1590,7 +1590,7 @@ if __name__ == "__main__":
 # Utdata: IG_Posts_YYYY_MM.csv filer med post-nivå analytics
 # 
 # CSV-KOLUMNER (i specificerad ordning):
-# Account, Post_ID, Post_Date, Media_Type, Media_Product_Type, Caption_Preview,
+# Account, Instagram_ID, Post_ID, Post_Date, Media_Type, Media_Product_Type, Caption_Preview,
 # Reach, Comments, Likes, Shares, Saved, Views, Status, Error_Message
 # 
 # CSV-SORTERING (uppdaterad):
@@ -1603,5 +1603,9 @@ if __name__ == "__main__":
 # - VIDEO/FEED: reach, comments, likes, saved, views  
 # - REELS: reach, comments, likes, shares, saved, views
 # - CAROUSEL: reach, comments, likes, saved (views för videor i carousel)
+# 
+# SUMMERING (korrigerad):
+# - Summerar endast: comments, likes, shares, saved
+# - Genomsnitt för: reach, views (unika per post)
 # 
 # ===================================================================================
