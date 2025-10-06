@@ -251,7 +251,7 @@ def count_conversations_for_month(page_id, page_token, year, month):
     total_conversations = 0
     total_messages = 0
     conversations_in_period = []
-    max_iterations = 10  # Säkerhetsgräns för att undvika oändlig loop
+    max_iterations = 100  # Säkerhetsgräns för att undvika oändlig loop
     iteration = 0
     
     while True:
@@ -334,14 +334,28 @@ def process_page_for_month(page_id, page_name, year, month):
         "messages": messages
     }
 
-def save_to_csv(data, year, month):
-    """Spara data till CSV-fil"""
-    filename = f"FB_DMs_{year}_{month:02d}.csv"
+def save_to_csv(data, year, month, page_name=None):
+    """Spara data till CSV-fil i årsspecifik katalog"""
+    # Skapa filnamn med sidnamn om det finns endast en sida
+    if page_name and len(data) == 1:
+        # Rensa sidnamn från specialtecken för filnamn
+        safe_name = "".join(c for c in page_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_name = safe_name.replace(' ', '_')
+        filename = f"FB_DMs_{year}_{month:02d}_{safe_name}.csv"
+    else:
+        filename = f"FB_DMs_{year}_{month:02d}.csv"
     
-    logger.info(f"💾 Sparar resultat till {filename}...")
+    # Skapa årsspecifik katalog
+    year_dir = get_year_directory(year)
+    ensure_directory_exists(year_dir)
+    
+    # Fullständig sökväg
+    full_path = os.path.join(year_dir, filename)
+    
+    logger.info(f"💾 Sparar resultat till {full_path}...")
     
     try:
-        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+        with open(full_path, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = ['Page ID', 'Page Name', 'Conversations', 'Messages']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
@@ -354,7 +368,7 @@ def save_to_csv(data, year, month):
                     'Messages': row['messages']
                 })
         
-        logger.info(f"✅ Sparade {len(data)} sidor till {filename}")
+        logger.info(f"✅ Sparade {len(data)} sidor till {full_path}")
         return True
         
     except Exception as e:
@@ -395,8 +409,9 @@ def get_months_to_process(start_year_month, specific_month=None):
     year, month = start_year, start_month
     
     while (year < end_year) or (year == end_year and month <= end_month):
-        # Kontrollera om filen redan finns
-        filename = f"FB_DMs_{year}_{month:02d}.csv"
+        # Kontrollera om filen redan finns i årsspecifik katalog
+        year_dir = get_year_directory(year)
+        filename = os.path.join(year_dir, f"FB_DMs_{year}_{month:02d}.csv")
         if not os.path.exists(filename):
             months.append((year, month))
         else:
@@ -523,7 +538,7 @@ def main():
             month_data.append(result)
         
         # Spara resultat
-        save_to_csv(month_data, year, month)
+        save_to_csv(month_data, year, month, page_name=pages[0][1] if len(pages) == 1 else None)
         
         logger.info(f"\n✅ Månad {year}-{month:02d} slutförd!")
     
