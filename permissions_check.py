@@ -178,13 +178,22 @@ def test_page_token_access(pages, token):
     print("="*80)
     print("\nDetta krävs för att skripten ska fungera korrekt...")
     
+    # Filtrera bort placeholder-sidor INNAN vi testar
+    real_pages = [p for p in pages 
+                  if not (p['name'].startswith('Srholder') and len(p['name']) > 8 and p['name'][8:].isdigit())]
+    
+    if not real_pages:
+        print("\nVARNING: Inga riktiga sidor att testa (endast placeholders)")
+        return False
+    
     success_count = 0
     fail_count = 0
     
-    # Testa max 5 sidor för att inte slösa API-anrop
-    test_pages = pages[:5] if len(pages) > 5 else pages
+    # Testa max 5 RIKTIGA sidor
+    test_pages = real_pages[:5] if len(real_pages) > 5 else real_pages
     
-    print(f"\nTestar {len(test_pages)} av {len(pages)} sidor...")
+    print(f"\nTestar {len(test_pages)} riktiga sidor av {len(real_pages)} totalt...")
+    print("(Hoppar över placeholder-sidor som Srholder*)")
     
     for page in test_pages:
         url = f"https://graph.facebook.com/{API_VERSION}/{page['id']}"
@@ -201,10 +210,15 @@ def test_page_token_access(pages, token):
             fail_count += 1
             print(f"  ✗ {page['name'][:40]:40} - MISSLYCKADES")
     
-    # Markera alla icke-testade som "ok" om minst en lyckades
+    # Markera alla icke-testade riktiga sidor som "ok" om minst en lyckades
     if success_count > 0:
-        for page in pages[len(test_pages):]:
+        for page in real_pages[len(test_pages):]:
             page["page_token_ok"] = True
+    
+    # Markera alla placeholder-sidor också
+    for page in pages:
+        if page not in real_pages:
+            page["page_token_ok"] = True  # Spelar ingen roll, de filtreras ändå bort
     
     print(f"\nResultat: {success_count}/{len(test_pages)} lyckades")
     
