@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Facebook Weekly Reach & Interactions Report Generator – v1.3
+Facebook Weekly Reach & Interactions Report Generator – v1.4
 
 Syfte:
-  - Hämta veckovisa räckviddssiffror (viktigast) och interaktioner på kontonivå (Facebook-sidor) för en given månad
+  - Hämta veckovisa räckviddssiffror (viktigast) och interaktioner på kontonivå (Facebook-sidor)
   - Skriver en CSV per vecka + valfri sammanfogad månad-CSV
 
 Viktigt:
@@ -15,10 +15,13 @@ Viktigt:
   - Tidzon: Graph API använder UTC i end_time. Vi matchar end_date eller end_date+1 dag.
 
 Inmatning:
-  - ACCESS TOKEN via env META_ACCESS_TOKEN (page- eller user-token med läsrätt på sidor)
+  - ACCESS TOKEN via config.py eller env META_ACCESS_TOKEN
+  - INITIAL_START_YEAR_MONTH från config.py
 
 Körningsexempel:
-  python3 fetch_facebook_reach_weekly.py --month 2025-05
+  python3 fetch_facebook_reach_weekly.py                    # Alla månader från config.py
+  python3 fetch_facebook_reach_weekly.py --month 2025-05    # Specifik månad
+  python3 fetch_facebook_reach_weekly.py --week 2025-W19    # Specifik vecka
 
 Krav: requests
 """
@@ -46,6 +49,7 @@ except Exception:
     _CFG_API_VER = ""
 API_VERSION = _CFG_API_VER or os.getenv("FB_API_VERSION", "v20.0")
 GRAPH_BASE = f"https://graph.facebook.com/{API_VERSION}"
+
 # Försök först läsa token från config.py, annars fall tillbaka till env
 try:
     from config import ACCESS_TOKEN as CONFIG_ACCESS_TOKEN  # type: ignore
@@ -55,6 +59,15 @@ except Exception:
 
 ACCESS_TOKEN = _CFG_TOKEN or os.getenv("META_ACCESS_TOKEN")
 TOKEN_SOURCE = "config.py" if _CFG_TOKEN else ("env META_ACCESS_TOKEN" if os.getenv("META_ACCESS_TOKEN") else "MISSING")
+
+# Läs startdatum från config.py
+try:
+    from config import INITIAL_START_YEAR_MONTH  # type: ignore
+    _CFG_START = INITIAL_START_YEAR_MONTH or ""
+except Exception:
+    _CFG_START = ""
+
+INITIAL_START_YEAR_MONTH = _CFG_START or "2025-01"
 
 # Kataloger
 OUT_ROOT = os.getenv("OUT_DIR", "weekly_reports")
@@ -133,6 +146,72 @@ def iter_weeks_in_month(year: int, month: int) -> List[Tuple[int, date, date]]:
     return weeks
 
 
+def get_last_complete_week() -> Tuple[int, date, date]:
+    """Returnera den senast kompletta veckan (senaste måndag-söndag som avslutats)."""
+    today = date.today()
+    
+    # Hitta senaste söndag (0=måndag, 6=söndag)
+    days_since_sunday = (today.weekday() + 1) % 7  # Dagar sedan senaste söndag
+    if days_since_sunday == 0:  # Om idag är söndag
+        last_sunday = today - timedelta(days=7)  # Föregående söndag
+    else:
+        last_sunday = today - timedelta(days=days_since_sunday)
+    
+    # Senaste kompletta veckans måndag
+    last_monday = last_sunday - timedelta(days=6)
+    
+    week_num = last_monday.isocalendar()[1]
+    
+    return week_num, last_monday, last_sunday
+
+
+def get_weeks_to_process(start_year_month: str) -> List[Tuple[int, int, date, date]]:
+    """Bestäm vilka veckor som ska bearbetas från startdatum till senast kompletta vecka.
+    
+    Returnerar: List[(year, week_num, start_date, end_date)]
+    """
+    try:
+        start_year, start_month = map(int, start_year_month.split("-"))
+    except Exception:
+        logger.error(f"Ogiltigt startdatum: {start_year_month}. Använd YYYY-MM")
+        return []
+    
+    # Startdatum = första dagen i startmånaden
+    start_date = date(start_year, start_month, 1)
+    
+    # Hitta första måndag i eller efter startdatum
+    first_monday = monday_on_or_after(start_date)
+    
+    # Senaste kompletta vecka
+    _, last_complete_monday, last_complete_sunday = get_last_complete_week()
+    
+    weeks = []
+    current_monday = first_monday
+    
+    # Iterera vecka för vecka till och med senaste kompletta vecka
+    while current_monday <= last_complete_monday:
+        current_sunday = sunday_of_week(current_monday)
+        week_num = current_monday.isocalendar()[1]
+        year = current_monday.year
+        
+        weeks.append((year, week_num, current_monday, current_sunday))
+        
+        # Nästa vecka
+        current_monday = current_monday + timedelta(days=7)
+    
+    return weeks
+
+
+def week_already_processed(year: int, month: int, week_num: int) -> bool:
+    """Kontrollera om veckans rapport redan finns."""
+    ym_dir = os.path.join(OUT_ROOT, f"{year:04d}_{month:02d}")
+    if not os.path.isdir(ym_dir):
+        return False
+    
+    week_file = os.path.join(ym_dir, f"week_{week_num}.csv")
+    return os.path.isfile(week_file)
+
+
 # =================== HTTP/Graph utils =====================
 class ApiError(Exception):
     pass
@@ -207,6 +286,26 @@ def list_pages(limit: int = 500) -> List[Page]:
         url = next_url
         params = {}
     return pages
+
+
+def filter_placeholder_pages(pages: List[Page]) -> List[Page]:
+    """Filtrera bort placeholder-sidor som SrholderX (där X är ett tal)"""
+    filtered_pages = []
+    filtered_out = []
+    
+    for page in pages:
+        if page.name and page.name.startswith('Srholder') and page.name[8:].isdigit():
+            filtered_out.append(page)
+            logger.debug(f"Filtrerar bort placeholder-sida: {page.name} (ID: {page.id})")
+        else:
+            filtered_pages.append(page)
+    
+    if filtered_out:
+        placeholder_names = [p.name for p in filtered_out]
+        logger.info(f"Filtrerade bort {len(filtered_out)} placeholder-sidor: {', '.join(placeholder_names)}")
+    
+    logger.info(f"{len(filtered_pages)} sidor kvar efter filtrering")
+    return filtered_pages
 
 
 def get_page_token(page_id: str) -> str:
@@ -396,10 +495,11 @@ def process_month(year: int, month: int, pages: List[Page]) -> None:
 # =================== CLI / main ===========================
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Facebook Weekly Reach & Interactions Report Generator – v1.3")
-    g = ap.add_mutually_exclusive_group(required=True)
+    ap = argparse.ArgumentParser(description="Facebook Weekly Reach & Interactions Report Generator – v1.4")
+    g = ap.add_mutually_exclusive_group(required=False)
     g.add_argument("--month", help="Månad i format YYYY-MM (t.ex. 2025-05)")
     g.add_argument("--week", help="Vecka i ISO-format YYYY-Www (t.ex. 2025-W19)")
+    ap.add_argument("--start", help="Överrida startdatum från config.py (YYYY-MM)", default=None)
     ap.add_argument("--pages-json", help="Valfri JSON-fil med [{'id':..., 'name':...}, ...] för att begränsa sidor", default=None)
     ap.add_argument("--no-combine", help="Skippa sammanfogad combined.csv", action="store_true")
     return ap.parse_args(argv)
@@ -407,12 +507,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str]) -> None:
     if not ACCESS_TOKEN:
-        print("Saknar ACCESS TOKEN. Sätt env META_ACCESS_TOKEN.", file=sys.stderr)
+        print("Saknar ACCESS TOKEN. Sätt env META_ACCESS_TOKEN eller i config.py.", file=sys.stderr)
         sys.exit(2)
 
     start_file_logging()
-    logger.info("Facebook Weekly Reach & Interactions Report Generator - v1.3")
-    logger.info("Startdatum: 2025-01")
+    logger.info("Facebook Weekly Reach & Interactions Report Generator - v1.4")
+    logger.info(f"Startdatum från config.py: {INITIAL_START_YEAR_MONTH}")
     logger.info("Veckorapporter sparas i: weekly_reports/YYYY_MM/")
     logger.info("-------------------------------------------------------------------")
     logger.info(f"Token-källa: {TOKEN_SOURCE}")
@@ -433,29 +533,81 @@ def main(argv: List[str]) -> None:
         logger.info("Hämtar tillgängliga sidor...")
         pages = list_pages()
         logger.info(f"[OK] Hittade {len(pages)} sidor")
+        
+        # Filtrera bort placeholder-sidor
+        pages = filter_placeholder_pages(pages)
+        
+        if not pages:
+            logger.error("Inga sidor kvar efter filtrering. Avbryter.")
+            sys.exit(1)
 
     # Körning
     if args.month:
+        # Specifik månad
         y, m = map(int, args.month.split("-"))
         logger.info(f"Kör endast för månad: {y}-{m:02d}")
         process_month(y, m, pages)
-    else:
-        # En enskild vecka
-        # Format: YYYY-Www (ISO vecka)
+    elif args.week:
+        # En enskild vecka (ISO-format)
         try:
             y, w = args.week.split("-W")
             y = int(y)
             w = int(w)
         except Exception:
             raise SystemExit("Ogiltigt --week. Använd t.ex. 2025-W19")
-        # ISO: vecka w, måndag = isocalendar
-        # hitta måndagen i veckan
-        # metod: starta vid 4 jan (garanterat vecka 1) och gå till önskad vecka
-        # enklare: ta första torsdag i året och bygg datum – men Python 3.8+ har fromisocalendar
         start = date.fromisocalendar(y, w, 1)
         end = start + timedelta(days=6)
         out_dir = os.path.join(OUT_ROOT, f"{start.year:04d}_{start.month:02d}")
+        logger.info(f"Kör endast för vecka: {y}-W{w:02d}")
         process_week(start.year, w, start, end, pages, out_dir)
+    else:
+        # Auto-run: Alla veckor från startdatum
+        start_ym = args.start or INITIAL_START_YEAR_MONTH
+        
+        # Hitta senaste kompletta vecka för loggning
+        last_week_num, last_monday, last_sunday = get_last_complete_week()
+        
+        logger.info("======================================================================")
+        logger.info(f"AUTO-RUN MODE: Hämtar alla veckor från {start_ym}")
+        logger.info(f"Slutar med senaste kompletta vecka: {last_monday} till {last_sunday} (vecka {last_week_num})")
+        logger.info("======================================================================")
+        
+        weeks = get_weeks_to_process(start_ym)
+        if not weeks:
+            logger.error("Inga veckor att bearbeta")
+            sys.exit(1)
+        
+        logger.info(f"Totalt {len(weeks)} veckor att bearbeta")
+        
+        processed = 0
+        skipped = 0
+        
+        for year, week_num, start_date, end_date in weeks:
+            # Bestäm månadsmapp (baserat på startdatum för veckan)
+            month = start_date.month
+            
+            if week_already_processed(year, month, week_num):
+                logger.info(f"⏭️  Hoppar över vecka {week_num} ({start_date} till {end_date}) - redan bearbetad")
+                skipped += 1
+                continue
+            
+            logger.info(f"")
+            logger.info(f"📅 Bearbetar vecka {processed + 1}/{len(weeks) - skipped}: {year}-W{week_num:02d} ({start_date} till {end_date})")
+            
+            # Processar veckan och sparar i rätt månadsmapp
+            ym_dir = os.path.join(OUT_ROOT, f"{year:04d}_{month:02d}")
+            process_week(year, week_num, start_date, end_date, pages, ym_dir)
+            processed += 1
+            
+            # Paus mellan veckor (utom sista)
+            if processed < len(weeks) - skipped:
+                logger.info(f"💤 Pausar 5 sekunder mellan veckor...")
+                time.sleep(5)
+        
+        logger.info("")
+        logger.info("======================================================================")
+        logger.info(f"✅ KLART! Bearbetade {processed} veckor, hoppade över {skipped}")
+        logger.info("======================================================================")
 
 
 if __name__ == "__main__":
