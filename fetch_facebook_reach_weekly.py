@@ -32,6 +32,7 @@ import csv
 import time
 import json
 import math
+import re
 import argparse
 import logging
 from dataclasses import dataclass
@@ -288,13 +289,15 @@ def list_pages(limit: int = 500) -> List[Page]:
     return pages
 
 
+_PLACEHOLDER_RE = re.compile(r'^[Ss][Rr]holder\w*$')
+
 def filter_placeholder_pages(pages: List[Page]) -> List[Page]:
-    """Filtrera bort placeholder-sidor som SrholderX (där X är ett tal)"""
+    """Filtrera bort placeholder-sidor som SrholderX (t.ex. Srholder9a, SRholder8g)"""
     filtered_pages = []
     filtered_out = []
-    
+
     for page in pages:
-        if page.name and page.name.startswith('Srholder') and page.name[8:].isdigit():
+        if page.name and _PLACEHOLDER_RE.match(page.name):
             filtered_out.append(page)
             logger.debug(f"Filtrerar bort placeholder-sida: {page.name} (ID: {page.id})")
         else:
