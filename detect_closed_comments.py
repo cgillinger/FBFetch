@@ -22,6 +22,7 @@ import requests
 import logging
 import argparse
 import sys
+import urllib.parse
 from datetime import datetime
 from config import (
     ACCESS_TOKEN, TOKEN_LAST_UPDATED, API_VERSION,
@@ -60,6 +61,36 @@ def setup_logging():
 logger = setup_logging()
 
 # ---------------------------------------------------------------------------
+# Hjälpfunktion: maskera token i URL för säker loggning
+# ---------------------------------------------------------------------------
+
+def _mask_url(url):
+    """Returnerar URL med access_token ersatt av [REDACTED] för säker loggning."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "access_token" in params:
+            params["access_token"] = ["[REDACTED]"]
+        new_query = urllib.parse.urlencode(params, doseq=True)
+        return urllib.parse.urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return "[URL ej visningsbar]"
+
+
+def _unpack_next_url(next_url):
+    """Extraherar access_token från en Facebook-pagineringslänk och returnerar
+    (clean_url, params) där token ligger i params-dikt (ej i URL:en)."""
+    parsed = urllib.parse.urlparse(next_url)
+    qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    token_list = qs.pop("access_token", [])
+    token = token_list[0] if token_list else None
+    clean_query = urllib.parse.urlencode(qs, doseq=True)
+    clean_url = urllib.parse.urlunparse(parsed._replace(query=clean_query))
+    params = {"access_token": token} if token else {}
+    return clean_url, params
+
+
+# ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
 
@@ -87,7 +118,11 @@ def check_token_expiry():
 
 
 def api_request(url, params, retry_count=0):
-    """GET-anrop med felhantering och rate limiting. Returnerar (data, had_error)."""
+    """GET-anrop med felhantering och rate limiting. Returnerar (data, had_error).
+
+    access_token skickas som Authorization-header (Bearer) om det finns i params,
+    så att token aldrig exponeras i URL:er eller loggmeddelanden.
+    """
     global api_call_count, start_time, rate_limit_backoff, consecutive_successes
 
     api_call_count += 1
@@ -97,9 +132,14 @@ def api_request(url, params, retry_count=0):
         rate = api_call_count / elapsed * 3600
         logger.info(f"API-hastighet: {rate:.0f} anrop/timme ({api_call_count} anrop)")
 
+    # Flytta access_token från query-params till Authorization-header
+    safe_params = dict(params)
+    token = safe_params.pop("access_token", None)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     try:
         time.sleep(0.1 * rate_limit_backoff)
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.get(url, params=safe_params, headers=headers, timeout=30)
 
         if response.status_code == 200:
             data = response.json()
@@ -119,7 +159,7 @@ def api_request(url, params, retry_count=0):
             time.sleep(wait)
             if retry_count < MAX_RETRIES:
                 return api_request(url, params, retry_count + 1)
-            logger.error(f"Max retry nått för {url}")
+            logger.error(f"Max retry nått för {_mask_url(url)}")
             return None, True
 
         else:
@@ -127,7 +167,7 @@ def api_request(url, params, retry_count=0):
             return None, True
 
     except requests.exceptions.Timeout:
-        logger.warning(f"Timeout för {url}")
+        logger.warning(f"Timeout för {_mask_url(url)}")
         if retry_count < MAX_RETRIES:
             time.sleep(RETRY_DELAY)
             return api_request(url, params, retry_count + 1)
@@ -159,8 +199,7 @@ def get_all_pages():
 
         next_url = data.get("paging", {}).get("next")
         if next_url:
-            url = next_url
-            params = {}
+            url, params = _unpack_next_url(next_url)
         else:
             break
 
@@ -218,8 +257,7 @@ def get_posts_for_page(page_id, page_token, limit=None):
 
         next_url = data.get("paging", {}).get("next")
         if next_url:
-            url = next_url
-            params = {}
+            url, params = _unpack_next_url(next_url)
         else:
             break
 

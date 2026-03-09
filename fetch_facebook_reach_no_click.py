@@ -9,6 +9,7 @@ import logging
 import argparse
 import sys
 import glob
+import urllib.parse
 import pandas as pd
 from datetime import datetime, timedelta
 from calendar import monthrange
@@ -52,6 +53,33 @@ def setup_logging():
 # Konfigurera loggning med datumstämplad fil
 logger = setup_logging()
 
+
+def _mask_url(url):
+    """Returnerar URL med access_token ersatt av [REDACTED] för säker loggning."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "access_token" in params:
+            params["access_token"] = ["[REDACTED]"]
+        new_query = urllib.parse.urlencode(params, doseq=True)
+        return urllib.parse.urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return "[URL ej visningsbar]"
+
+
+def _unpack_next_url(next_url):
+    """Extraherar access_token från en Facebook-pagineringslänk och returnerar
+    (clean_url, params) där token ligger i params-dikt (ej i URL:en)."""
+    parsed = urllib.parse.urlparse(next_url)
+    qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    token_list = qs.pop("access_token", [])
+    token = token_list[0] if token_list else None
+    clean_query = urllib.parse.urlencode(qs, doseq=True)
+    clean_url = urllib.parse.urlunparse(parsed._replace(query=clean_query))
+    params = {"access_token": token} if token else {}
+    return clean_url, params
+
+
 # Räknare för API-anrop
 api_call_count = 0
 start_time = time.time()
@@ -94,23 +122,32 @@ def save_page_cache(cache):
         logger.error(f"Kunde inte spara cache: {e}")
 
 def api_request(url, params, retries=MAX_RETRIES):
-    """Gör API-förfrågan med återförsök och rate limit-hantering"""
+    """Gör API-förfrågan med återförsök och rate limit-hantering.
+
+    access_token skickas som Authorization-header (Bearer) om det finns i params,
+    så att token aldrig exponeras i URL:er eller loggmeddelanden.
+    """
     global api_call_count
-    
+
     # Kontrollera om vi närmar oss rate limit
     current_time = time.time()
     elapsed_hours = (current_time - start_time) / 3600
     rate = api_call_count / elapsed_hours if elapsed_hours > 0 else 0
-    
-    if rate > MAX_REQUESTS_PER_HOUR * 0.9:  # Om vi använt 90% av rate limit
-        wait_time = 3600 / MAX_REQUESTS_PER_HOUR  # Vänta tillräckligt för att hålla oss under gränsen
+
+    if rate > MAX_REQUESTS_PER_HOUR * 0.9:
+        wait_time = 3600 / MAX_REQUESTS_PER_HOUR
         logger.warning(f"Närmar oss rate limit ({int(rate)}/h). Väntar {wait_time:.1f} sekunder...")
         time.sleep(wait_time)
-    
+
+    # Flytta access_token från query-params till Authorization-header
+    safe_params = dict(params)
+    token = safe_params.pop("access_token", None)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     for attempt in range(retries):
         try:
             api_call_count += 1
-            response = requests.get(url, params=params, timeout=30)
+            response = requests.get(url, params=safe_params, headers=headers, timeout=30)
             
             # Hantera vanliga HTTP-fel
             if response.status_code == 429:  # Too Many Requests
@@ -208,21 +245,19 @@ def get_page_ids_with_access(token):
     params = {"access_token": token, "limit": 100, "fields": "id,name"}
     
     pages = []
-    next_url = url
-    
-    while next_url:
-        data = api_request(url if next_url == url else next_url, {} if next_url != url else params)
-        
+
+    while True:
+        data = api_request(url, params)
+
         if not data or "data" not in data:
             break
-            
+
         pages.extend(data["data"])
         logger.debug(f"Hittade {len(data['data'])} sidor i denna batch")
-        
-        # Hantera paginering
+
         next_url = data.get("paging", {}).get("next")
-        if next_url and next_url != url:
-            logger.debug(f"Hämtar nästa sida från: {next_url}")
+        if next_url:
+            url, params = _unpack_next_url(next_url)
         else:
             break
     
@@ -332,9 +367,7 @@ def get_page_publications(page_id, page_token, since, until, page_name=None):
                 
                 # Kontrollera om det finns fler sidor
                 if "paging" in data and "next" in data["paging"] and posts_in_page > 0:
-                    # Använd nästa URL direkt
-                    url = data["paging"]["next"]
-                    params = {}  # Töm params eftersom allt är i URL:en
+                    url, params = _unpack_next_url(data["paging"]["next"])
                 else:
                     next_page = False
             elif data and "error" in data:
