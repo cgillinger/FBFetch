@@ -40,6 +40,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import requests
+import urllib.parse
 
 # ========================= Konfig =========================
 # Läs API-version: config.API_VERSION > env FB_API_VERSION > v20.0
@@ -218,9 +219,24 @@ class ApiError(Exception):
     pass
 
 
+def _unpack_next_url(next_url: str):
+    """Extraherar access_token från en Facebook-pagineringslänk och returnerar
+    (clean_url, params) där token ligger i params-dikt (ej i URL:en)."""
+    parsed = urllib.parse.urlparse(next_url)
+    qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    token_list = qs.pop("access_token", [])
+    token = token_list[0] if token_list else None
+    clean_query = urllib.parse.urlencode(qs, doseq=True)
+    clean_url = urllib.parse.urlunparse(parsed._replace(query=clean_query))
+    params: Dict[str, str] = {"access_token": token} if token else {}
+    return clean_url, params
+
+
 def api_get(url: str, params: Dict[str, str], *, timeout: int = 30) -> Dict:
-    # Token i params
+    # Flytta access_token från query-params till Authorization-header
     p = dict(params)
+    token = p.pop("access_token", None)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     # Enkel retry för nätfel och 5xx
     backoffs = [0.5, 1.0, 2.0, 4.0]
     last_exc: Optional[Exception] = None
@@ -228,7 +244,7 @@ def api_get(url: str, params: Dict[str, str], *, timeout: int = 30) -> Dict:
         try:
             if bo:
                 time.sleep(bo)
-            resp = requests.get(url, params=p, timeout=timeout)
+            resp = requests.get(url, params=p, headers=headers, timeout=timeout)
             if resp.status_code == 429:
                 # Rate limit – respektera Retry-After
                 ra = resp.headers.get("Retry-After")
@@ -284,8 +300,7 @@ def list_pages(limit: int = 500) -> List[Page]:
         next_url = paging.get("next")
         if not next_url:
             break
-        url = next_url
-        params = {}
+        url, params = _unpack_next_url(next_url)
     return pages
 
 

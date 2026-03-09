@@ -14,6 +14,7 @@ import requests
 import logging
 import argparse
 import sys
+import urllib.parse
 from datetime import datetime, timedelta
 from calendar import monthrange
 from config import (
@@ -50,6 +51,33 @@ def setup_logging():
     return logger
 
 logger = setup_logging()
+
+
+def _mask_url(url):
+    """Returnerar URL med access_token ersatt av [REDACTED] för säker loggning."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if "access_token" in params:
+            params["access_token"] = ["[REDACTED]"]
+        new_query = urllib.parse.urlencode(params, doseq=True)
+        return urllib.parse.urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return "[URL ej visningsbar]"
+
+
+def _unpack_next_url(next_url):
+    """Extraherar access_token från en Facebook-pagineringslänk och returnerar
+    (clean_url, params) där token ligger i params-dikt (ej i URL:en)."""
+    parsed = urllib.parse.urlparse(next_url)
+    qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    token_list = qs.pop("access_token", [])
+    token = token_list[0] if token_list else None
+    clean_query = urllib.parse.urlencode(qs, doseq=True)
+    clean_url = urllib.parse.urlunparse(parsed._replace(query=clean_query))
+    params = {"access_token": token} if token else {}
+    return clean_url, params
+
 
 # API-anropsräknare
 api_call_count = 0
@@ -103,50 +131,59 @@ def check_token_expiry():
         return False
 
 def api_request(url, params, retry_count=0):
-    """Gör ett API-anrop med felhantering och rate limiting"""
+    """Gör ett API-anrop med felhantering och rate limiting.
+
+    access_token skickas som Authorization-header (Bearer) om det finns i params,
+    så att token aldrig exponeras i URL:er eller loggmeddelanden.
+    """
     global api_call_count, start_time, rate_limit_backoff, consecutive_successes
-    
+
     api_call_count += 1
-    
+
     # Dynamisk rate limiting
     if api_call_count % 50 == 0:
         elapsed = time.time() - start_time
         rate = api_call_count / elapsed * 3600
         logger.info(f"📊 API-hastighet: {rate:.0f} anrop/timme ({api_call_count} anrop på {elapsed/60:.1f} min)")
-    
+
+    # Flytta access_token från query-params till Authorization-header
+    safe_params = dict(params)
+    token = safe_params.pop("access_token", None)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     try:
         time.sleep(0.1 * rate_limit_backoff)
-        response = requests.get(url, params=params, timeout=30)
-        
+        response = requests.get(url, params=safe_params, headers=headers, timeout=30)
+
         if response.status_code == 200:
             consecutive_successes += 1
             if consecutive_successes > 10 and rate_limit_backoff > 1.0:
                 rate_limit_backoff = max(1.0, rate_limit_backoff * 0.9)
             return response.json()
-        
+
         elif response.status_code == 429 or response.status_code == 17:
             consecutive_successes = 0
             rate_limit_backoff = min(5.0, rate_limit_backoff * 1.5)
             logger.warning(f"⚠️ Rate limit träffad. Väntar {RETRY_DELAY * rate_limit_backoff:.1f}s...")
             time.sleep(RETRY_DELAY * rate_limit_backoff)
-            
+
             if retry_count < MAX_RETRIES:
                 return api_request(url, params, retry_count + 1)
             else:
-                logger.error(f"❌ Max retry-försök nådda för {url}")
+                logger.error(f"❌ Max retry-försök nådda för {_mask_url(url)}")
                 return None
-        
+
         else:
             logger.error(f"❌ HTTP {response.status_code}: {response.text}")
             return None
-            
+
     except requests.exceptions.Timeout:
-        logger.warning(f"⚠️ Timeout för {url}")
+        logger.warning(f"⚠️ Timeout för {_mask_url(url)}")
         if retry_count < MAX_RETRIES:
             time.sleep(RETRY_DELAY)
             return api_request(url, params, retry_count + 1)
         return None
-        
+
     except Exception as e:
         logger.error(f"❌ API-fel: {e}")
         return None
@@ -295,8 +332,7 @@ def count_conversations_for_month(page_id, page_token, year, month):
         
         # Pagination
         if "paging" in data and "next" in data["paging"]:
-            url = data["paging"]["next"]
-            params = {}
+            url, params = _unpack_next_url(data["paging"]["next"])
         else:
             break
     
