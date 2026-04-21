@@ -248,18 +248,24 @@ def get_instagram_accounts(token):
 
 # ─── Metrik-hämtning ──────────────────────────────────────────────────────────
 
-def _month_timestamps(year, month):
-    """Returnera (since_unix, until_unix) — halvöppet intervall [dag 1, dag 1 nästa månad)."""
-    since = datetime(year, month, 1, tzinfo=timezone.utc)
-    if month == 12:
-        until = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        until = datetime(year, month + 1, 1, tzinfo=timezone.utc)
-    return int(since.timestamp()), int(until.timestamp())
+def get_month_boundaries(year, month):
+    """Returnera (since_ts, until_ts, period_start_iso, period_end_iso).
+
+    Använder alltid exakt 30 dagar (2 592 000 s) för att undvika
+    Instagram API:s gräns på max 30 dagar mellan since och until.
+    Period_end är sista dagen med data (dagen före until).
+    """
+    first_day = datetime(year, month, 1, tzinfo=timezone.utc)
+    since_ts = int(first_day.timestamp())
+    until_ts = since_ts + (30 * 86400)
+    period_start = first_day.strftime("%Y-%m-%d")
+    period_end = datetime.fromtimestamp(until_ts - 86400, tz=timezone.utc).strftime("%Y-%m-%d")
+    return since_ts, until_ts, period_start, period_end
 
 
-def fetch_insight(ig_id, metric, since, until, token):
+def fetch_insight(ig_id, metric, since, until, token, account_name=None):
     """Hämta ett aggregerat insights-värde via metric_type=total_value."""
+    label = f"@{account_name}" if account_name else ig_id
     url = f"https://graph.facebook.com/{API_VERSION}/{ig_id}/insights"
     params = {
         "metric": metric,
@@ -270,6 +276,10 @@ def fetch_insight(ig_id, metric, since, until, token):
         "access_token": token,
     }
     data = api_get(url, params)
+    if data and "error" in data:
+        msg = data["error"].get("message", "Okänt fel")
+        logger.warning(f"⚠️  {metric.capitalize()}-fel för {label}: {msg}")
+        return 0
     if not data or "data" not in data or not data["data"]:
         return 0
     try:
@@ -330,19 +340,20 @@ def fetch_publications(ig_id, token, year, month):
 
 
 def fetch_account_metrics(account, token, year, month):
-    since, until = _month_timestamps(year, month)
+    since, until, period_start, period_end = get_month_boundaries(year, month)
     result = {
         "ig_username": account.ig_username,
         "ig_name": account.ig_name,
         "fb_page_name": account.fb_page_name,
         "Reach": 0, "Views": 0, "Followers": 0, "Publications": 0,
+        "Period_start": period_start, "Period_end": period_end,
         "Status": "OK", "Comment": "",
     }
     errors = []
 
     for metric_key, fetch_fn in [
-        ("Reach", lambda: fetch_insight(account.ig_id, "reach", since, until, token)),
-        ("Views", lambda: fetch_insight(account.ig_id, "views", since, until, token)),
+        ("Reach", lambda: fetch_insight(account.ig_id, "reach", since, until, token, account.ig_username)),
+        ("Views", lambda: fetch_insight(account.ig_id, "views", since, until, token, account.ig_username)),
         ("Followers", lambda: fetch_followers(account.ig_id, token)),
         ("Publications", lambda: fetch_publications(account.ig_id, token, year, month)),
     ]:
@@ -360,7 +371,7 @@ def fetch_account_metrics(account, token, year, month):
 # ─── CSV och kataloger ────────────────────────────────────────────────────────
 
 FIELDNAMES = ["ig_username", "ig_name", "fb_page_name", "Reach", "Views",
-              "Followers", "Publications", "Status", "Comment"]
+              "Followers", "Publications", "Period_start", "Period_end", "Status", "Comment"]
 
 
 def output_path(year, month):
