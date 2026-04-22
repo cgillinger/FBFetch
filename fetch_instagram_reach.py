@@ -189,13 +189,12 @@ class IGAccount:
 
 
 def get_instagram_accounts(token):
-    """Hämta IG Business-konton via me/accounts, filtrera Srholder-placeholder-sidor."""
+    """Hämta IG Business-konton via me/accounts."""
     logger.info("Hämtar Instagram-konton via me/accounts...")
     url = f"https://graph.facebook.com/{API_VERSION}/me/accounts"
     params = {"access_token": token, "limit": 100, "fields": "id,name,instagram_business_account"}
 
     accounts = []
-    filtered_count = 0
 
     while True:
         data = api_get(url, params)
@@ -204,10 +203,8 @@ def get_instagram_accounts(token):
 
         for page in data["data"]:
             page_name = page.get("name", "")
-            if page_name.startswith("Srholder") and page_name[8:].isdigit():
-                filtered_count += 1
-                logger.debug(f"Filtrerar bort placeholder: {page_name}")
-                continue
+            # Srholder-filter borttaget: dessa sidor är bryggan till riktiga IG-konton
+            # och ska inte filtreras här (filtret finns kvar i FB-skriptet där det hör hemma).
 
             ig_data = page.get("instagram_business_account")
             if not ig_data:
@@ -234,8 +231,6 @@ def get_instagram_accounts(token):
         else:
             break
 
-    if filtered_count:
-        logger.info(f"Filtrerade bort {filtered_count} placeholder-sidor.")
     logger.info(f"Hittade {len(accounts)} Instagram-konton.")
     return accounts
 
