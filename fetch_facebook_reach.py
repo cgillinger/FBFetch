@@ -741,7 +741,7 @@ def safe_int_value(value, default=0):
     else:
         return default
 
-def save_results(data, filename):
+def save_results(data, filename, period_start=None, period_end=None):
     """Spara resultaten till en CSV-fil i årsspecifik katalog"""
     try:
         # Extrahera år från filnamnet
@@ -779,7 +779,13 @@ def save_results(data, filename):
                 fieldnames.append("Status")
             if "Comment" in sorted_data[0]:
                 fieldnames.append("Comment")
-        
+
+        if period_start:
+            fieldnames.extend(["Period_start", "Period_end"])
+            for item in sorted_data:
+                item["Period_start"] = period_start
+                item["Period_end"] = period_end
+
         with open(full_path, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -1021,36 +1027,36 @@ def process_custom_period(start_date, end_date, cache, page_list=None, update_al
     )
     
     if all_data:
-        save_results(all_data, output_file)
-        
+        save_results(all_data, output_file, period_start=start_date, period_end=end_date)
+
         try:
             total_reach = sum(safe_int_value(item.get("Reach", 0)) for item in all_data)
-            
+
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
             has_publications = any("Publications" in item for item in all_data)
-            
+
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
             else:
                 total_engaged = 0
-                
+
             if has_engagements:
                 total_engagements = sum(safe_int_value(item.get("Engagements", 0)) for item in all_data)
             else:
                 total_engagements = 0
-                
+
             if has_reactions:
                 total_reactions = sum(safe_int_value(item.get("Reactions", 0)) for item in all_data)
             else:
                 total_reactions = 0
-                
+
             if has_publications:
                 total_publications = sum(safe_int_value(item.get("Publications", 0)) for item in all_data)
             else:
                 total_publications = 0
-            
+
             logger.info(f"Summering för {start_date} till {end_date}:")
             logger.info(f"  - Total räckvidd: {total_reach:,}")
             
@@ -1130,36 +1136,36 @@ def process_month(year, month, cache, page_list=None, update_all=False, generate
     )
     
     if all_data:
-        save_results(all_data, output_file)
-        
+        save_results(all_data, output_file, period_start=start_date, period_end=end_date)
+
         try:
             total_reach = sum(safe_int_value(item.get("Reach", 0)) for item in all_data)
-            
+
             has_engaged = any("Engaged Users" in item for item in all_data)
             has_engagements = any("Engagements" in item for item in all_data)
             has_reactions = any("Reactions" in item for item in all_data)
             has_publications = any("Publications" in item for item in all_data)
-            
+
             if has_engaged:
                 total_engaged = sum(safe_int_value(item.get("Engaged Users", 0)) for item in all_data)
             else:
                 total_engaged = 0
-                
+
             if has_engagements:
                 total_engagements = sum(safe_int_value(item.get("Engagements", 0)) for item in all_data)
             else:
                 total_engagements = 0
-                
+
             if has_reactions:
                 total_reactions = sum(safe_int_value(item.get("Reactions", 0)) for item in all_data)
             else:
                 total_reactions = 0
-                
+
             if has_publications:
                 total_publications = sum(safe_int_value(item.get("Publications", 0)) for item in all_data)
             else:
                 total_publications = 0
-            
+
             logger.info(f"Summering för {year}-{month:02d}:")
             logger.info(f"  - Total räckvidd: {total_reach:,}")
             
