@@ -491,11 +491,11 @@ def save_to_csv(data, year, month):
                 })
         
         logger.info(f"✅ Sparade {len(data)} sidor till {filename}")
-        return True
+        return filename
 
     except Exception as e:
         logger.error(f"❌ Kunde inte spara CSV: {e}")
-        return False
+        return None
 
 def append_to_csv(row_data, filename, write_header=False):
     """Lägg till en rad i CSV-filen (append-läge)."""
@@ -671,20 +671,24 @@ def main():
     logger.info(f"📅 Kommer att bearbeta {len(months_to_process)} månad(er)")
     
     # Bearbeta varje månad
-    for year, month in months_to_process:
+    for month_idx, (year, month) in enumerate(months_to_process, 1):
         logger.info(f"\n{'='*80}")
         logger.info(f"📆 Bearbetar månad: {year}-{month:02d}")
         logger.info(f"{'='*80}")
-        
-        filename = f"FB_Comments_{year}_{month:02d}.csv"
-        file_exists = os.path.exists(filename)
 
-        for page_id, page_name in pages:
+        month_data = []
+
+        for page_idx, (page_id, page_name) in enumerate(pages, 1):
             result = process_page_for_month(page_id, page_name, year, month)
-            append_to_csv(result, filename, write_header=not file_exists)
-            file_exists = True
+            month_data.append(result)
 
-        logger.info(f"\n✅ Månad {year}-{month:02d} slutförd! Data sparad till {filename}")
+            # Spara efter varje sida (append-safe)
+            csv_path = save_to_csv(month_data, year, month)
+            if csv_path:
+                logger.info(f"  💾 Sparad till {csv_path}")
+            logger.info(f"  📊 {page_idx} av {len(pages)} sidor körda, {month_idx} av {len(months_to_process)} månader körda")
+
+        logger.info(f"\n✅ Månad {year}-{month:02d} slutförd!")
     
     logger.info(f"\n{'='*80}")
     logger.info("🎉 KLART! Alla månader bearbetade.")
