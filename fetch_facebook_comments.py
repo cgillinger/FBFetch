@@ -492,10 +492,33 @@ def save_to_csv(data, year, month):
         
         logger.info(f"✅ Sparade {len(data)} sidor till {filename}")
         return True
-        
+
     except Exception as e:
         logger.error(f"❌ Kunde inte spara CSV: {e}")
         return False
+
+def append_to_csv(row_data, filename, write_header=False):
+    """Lägg till en rad i CSV-filen (append-läge)."""
+    try:
+        with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['Page ID', 'Page Name', 'Comments', 'Replies', 'Total']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            if write_header:
+                writer.writeheader()
+
+            writer.writerow({
+                'Page ID': row_data['page_id'],
+                'Page Name': row_data['page_name'],
+                'Comments': row_data['comments'],
+                'Replies': row_data['replies'],
+                'Total': row_data['total']
+            })
+
+        logger.debug(f"  💾 Sparade {row_data['page_name']} till {filename}")
+
+    except Exception as e:
+        logger.error(f"❌ Kunde inte skriva till {filename}: {e}")
 
 def get_months_to_process(start_year_month, specific_month=None):
     """Bestäm vilka månader som ska bearbetas"""
@@ -653,16 +676,15 @@ def main():
         logger.info(f"📆 Bearbetar månad: {year}-{month:02d}")
         logger.info(f"{'='*80}")
         
-        month_data = []
-        
+        filename = f"FB_Comments_{year}_{month:02d}.csv"
+        file_exists = os.path.exists(filename)
+
         for page_id, page_name in pages:
             result = process_page_for_month(page_id, page_name, year, month)
-            month_data.append(result)
-        
-        # Spara resultat
-        save_to_csv(month_data, year, month)
-        
-        logger.info(f"\n✅ Månad {year}-{month:02d} slutförd!")
+            append_to_csv(result, filename, write_header=not file_exists)
+            file_exists = True
+
+        logger.info(f"\n✅ Månad {year}-{month:02d} slutförd! Data sparad till {filename}")
     
     logger.info(f"\n{'='*80}")
     logger.info("🎉 KLART! Alla månader bearbetade.")
