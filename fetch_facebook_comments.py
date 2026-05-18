@@ -400,6 +400,7 @@ def count_replies_on_comment(comment_id, page_token):
     data = api_request(url, params)
     
     if not data:
+        logger.debug(f"    ⚠️ Kunde inte hämta replies för kommentar {comment_id}")
         return 0
     
     # Använd summary om tillgängligt
@@ -594,7 +595,7 @@ def main():
             return 1
 
     # Om inget --page-id argument gavs, fråga användaren
-    if not args.page_id:
+    if not args.page_id and not args.filter:
         logger.info("\n" + "=" * 80)
         logger.info("📋 TILLGÄNGLIGA SIDOR:")
         logger.info("=" * 80)
