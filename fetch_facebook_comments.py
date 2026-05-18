@@ -216,6 +216,80 @@ def filter_placeholder_pages(page_list):
     logger.info(f"✅ {len(filtered_pages)} sidor kvar efter filtrering")
     return filtered_pages
 
+# ── Fördefinierade sidfilter ──────────────────────────────────────────
+PAGE_FILTER_GROUPS = {
+    "p4lokalt": {
+        "description": "Alla 25 lokala P4-stationer",
+        "match": lambda name: (
+            name.startswith("P4 ")
+            and name not in {
+                "P4 Extra",
+                "P4 DANS",
+                "P4 Plus Sveriges Radio",
+            }
+            and not name.startswith("P4 Extra")
+            and not name.startswith("P4 DANS")
+            and not name.startswith("P4 Plus")
+        ),
+    },
+    "riks": {
+        "description": "Alla rikskonton (ej P4 lokalt)",
+        "match": lambda name: not PAGE_FILTER_GROUPS["p4lokalt"]["match"](name),
+    },
+    "p1": {
+        "description": "P1-relaterade sidor",
+        "match": lambda name: "P1" in name,
+    },
+    "p2": {
+        "description": "P2-relaterade sidor",
+        "match": lambda name: "P2" in name,
+    },
+    "p3": {
+        "description": "P3-relaterade sidor",
+        "match": lambda name: "P3" in name,
+    },
+    "ekot": {
+        "description": "Ekot/nyhetssidor",
+        "match": lambda name: "Ekot" in name,
+    },
+    "minoritet": {
+        "description": "Minoritets- och språkredaktioner",
+        "match": lambda name: any(kw in name for kw in [
+            "Sameradion", "Radio Romano", "Finska",
+            "Meänraatio", "Terni Generatcia",
+            "Radio Sweden",  # fångar Arabic, Farsi/Dari, Somali, lätt svenska, samt engelska
+        ]),
+    },
+}
+
+
+def apply_page_filter(page_list, filter_name):
+    """Filtrera sidlistan baserat på fördefinierat filter.
+    Returnerar (filtrerad_lista, antal_borttagna)."""
+    key = filter_name.lower()
+    if key not in PAGE_FILTER_GROUPS:
+        logger.error(f"❌ Okänt filter: '{filter_name}'. Använd --filter list för att se tillgängliga.")
+        return None, 0
+
+    match_fn = PAGE_FILTER_GROUPS[key]["match"]
+    filtered = [(pid, pname) for pid, pname in page_list if match_fn(pname)]
+    removed = len(page_list) - len(filtered)
+    logger.info(f"🔍 Filter '{key}': {len(filtered)} sidor matchar, {removed} filtrerade bort")
+    return filtered, removed
+
+
+def print_filter_list(page_list):
+    """Visa tillgängliga filter och vilka sidor de matchar."""
+    logger.info("\n" + "=" * 80)
+    logger.info("📋 TILLGÄNGLIGA FILTER (--filter <namn>)")
+    logger.info("=" * 80)
+    for key, cfg in PAGE_FILTER_GROUPS.items():
+        matching = [pname for _, pname in page_list if cfg["match"](pname)]
+        logger.info(f"\n  {key:12s} - {cfg['description']} ({len(matching)} sidor)")
+        for name in sorted(matching):
+            logger.info(f"    • {name}")
+    logger.info("\n" + "=" * 80)
+
 def get_page_access_token(page_id):
     """Konvertera systemanvändartoken till Page Access Token"""
     url = f"https://graph.facebook.com/{API_VERSION}/{page_id}"
@@ -479,7 +553,8 @@ def main():
     parser.add_argument('--start', help='Startmånad (överrider config.py)', default=INITIAL_START_YEAR_MONTH)
     parser.add_argument('--debug', action='store_true', help='Aktivera debug-loggning')
     parser.add_argument('--page-id', help='Specifikt Page ID att bearbeta (annars alla sidor)')
-    
+    parser.add_argument('--filter', help='Filtrera sidor efter grupp. Använd "--filter list" för att visa tillgängliga filter.')
+
     args = parser.parse_args()
     
     if args.debug:
@@ -505,7 +580,19 @@ def main():
     if not pages:
         logger.error("❌ Inga giltiga sidor efter filtrering. Avbryter.")
         return 1
-    
+
+    # ── Hantera --filter ──
+    if args.filter:
+        if args.filter.lower() == "list":
+            print_filter_list(pages)
+            return 0
+        pages, _ = apply_page_filter(pages, args.filter)
+        if pages is None:
+            return 1
+        if not pages:
+            logger.error(f"❌ Inga sidor matchade filtret '{args.filter}'. Avbryter.")
+            return 1
+
     # Om inget --page-id argument gavs, fråga användaren
     if not args.page_id:
         logger.info("\n" + "=" * 80)
