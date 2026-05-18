@@ -41,7 +41,6 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 | `fetch_facebook_reach_weekly.py` | **Veckovis** räckvidd och interaktioner per Facebook-sida |
 | `fetch_facebook_reach.py` | **Månadsvis** räckvidd och interaktioner per Facebook-sida |
 | `fetch_facebook_reach_no_click.py` | Räckvidd utan klick-mätvärden |
-| `fetch_facebook_comments.py` | Kommentarer på Facebook-inlägg |
 | `fetch_facebook_dms.py` | Direktmeddelanden (DM) från Facebook-sidor |
 | `fetch_instagram_posts_ver4_6.py` | Instagram-inlägg, räckvidd och engagemang |
 | `demographics.py` | Demografidata för sidor |

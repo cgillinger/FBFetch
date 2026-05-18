@@ -17,7 +17,6 @@ os.makedirs(EXPORT_PATH, exist_ok=True)
 REQUIRED_SCOPES = {
     "pages_show_list",           # Lista sidor
     "pages_read_engagement",     # Läsa engagemang
-    "pages_read_user_content",   # Läsa kommentarer (kommentarskriptet)
     "read_insights",             # Läsa insights (reach-skriptet)
 }
 
@@ -123,8 +122,6 @@ def debug_token(token):
         print("\nPåverkar följande skript:")
         if "read_insights" in missing_required:
             print("  - fetch_facebook_reach.py (reach-data)")
-        if "pages_read_user_content" in missing_required:
-            print("  - fetch_facebook_comments.py (kommentarer)")
         print("\nSkapa en ny token med dessa behörigheter i Business Manager eller Graph API Explorer.")
         return None, scopes
     
@@ -340,7 +337,6 @@ def main():
     print("="*80)
     print("\nDu kan nu köra:")
     print("  - python3 fetch_facebook_reach.py")
-    print("  - python3 fetch_facebook_comments.py")
     if "pages_messaging" in scopes:
         print("  - python3 fetch_facebook_dms.py")
     else:
