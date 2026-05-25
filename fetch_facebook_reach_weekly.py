@@ -304,24 +304,28 @@ def list_pages(limit: int = 500) -> List[Page]:
     return pages
 
 
-_PLACEHOLDER_RE = re.compile(r'^[Ss][Rr]holder\w*$')
+_PLACEHOLDER_RE = re.compile(r'^srholder\w*$', re.IGNORECASE)
 
 def filter_placeholder_pages(pages: List[Page]) -> List[Page]:
-    """Filtrera bort placeholder-sidor som SrholderX (t.ex. Srholder9a, SRholder8g)"""
+    """Filtrera bort placeholder-sidor vars namn matchar 'Srholder*' (skiftlägesokänsligt).
+
+    Exempel som filtreras: Srholder9a, SRholder8g, SRholderXy, srholderxy, SrHolderXy.
+    """
     filtered_pages = []
     filtered_out = []
 
     for page in pages:
-        if page.name and _PLACEHOLDER_RE.match(page.name):
+        name = (page.name or "").strip()
+        if name and _PLACEHOLDER_RE.match(name):
             filtered_out.append(page)
             logger.debug(f"Filtrerar bort placeholder-sida: {page.name} (ID: {page.id})")
         else:
             filtered_pages.append(page)
-    
+
     if filtered_out:
         placeholder_names = [p.name for p in filtered_out]
         logger.info(f"Filtrerade bort {len(filtered_out)} placeholder-sidor: {', '.join(placeholder_names)}")
-    
+
     logger.info(f"{len(filtered_pages)} sidor kvar efter filtrering")
     return filtered_pages
 
@@ -551,13 +555,13 @@ def main(argv: List[str]) -> None:
         logger.info("Hämtar tillgängliga sidor...")
         pages = list_pages()
         logger.info(f"[OK] Hittade {len(pages)} sidor")
-        
-        # Filtrera bort placeholder-sidor
-        pages = filter_placeholder_pages(pages)
-        
-        if not pages:
-            logger.error("Inga sidor kvar efter filtrering. Avbryter.")
-            sys.exit(1)
+
+    # Filtrera bort placeholder-sidor (oavsett källa)
+    pages = filter_placeholder_pages(pages)
+
+    if not pages:
+        logger.error("Inga sidor kvar efter filtrering. Avbryter.")
+        sys.exit(1)
 
     # Körning
     if args.month:
