@@ -284,4 +284,10 @@ Pull requests välkomnas. Öppna gärna ett issue först för större ändringar
 
 ---
 
+## Om projektet
+
+> Det här är ett personligt hobbyprojekt som jag byggt för eget bruk och lagt upp ifall det är till nytta för någon annan. Jag jobbar på det på fritiden, så issues och PR:ar är välkomna men svar kan dröja. Använd på egen risk.
+
+---
+
 *Byggt för intern statistikinsamling. Kräver ett giltigt Meta-konto med administratörsbehörighet till de sidor du vill hämta data för.*
