@@ -72,8 +72,11 @@ OUTPUT_ROOT = getattr(config, "OUTPUT_ROOT", ".")
 # ---------------------------------------------------------------------------
 # Facebook — unika viewers (närmaste motsvarighet till gammal reach).
 FB_VIEWERS_METRIC = "page_total_media_view_unique"   # alt: page_views_total (ej unikt)
-FB_MONTH_PERIOD = "total_over_range"                  # spegla gamla månadsskriptet; alt: "day"+summering
-FB_WEEK_PERIOD = "week"                               # spegla gamla veckoskriptet
+FB_MONTH_PERIOD = "total_over_range"                  # unik över hela månaden (verifierat: dedup, korrekt)
+# OBS: period="week" ger ett RULLANDE 7-dagarsvärde per dag som, summerat, blir ~6–9× uppblåst
+# (verifierat 2026-07 mot P4 Stockholm). Använd total_over_range över mån–sön-intervallet i stället —
+# det ger korrekt unikt veckotal och invarianterna (vecka ≤ månad ≤ summa veckor) håller.
+FB_WEEK_PERIOD = "total_over_range"
 # Instagram — reach (unika konton) fanns kvar i gamla skriptet; media-views som komplement.
 IG_VIEWERS_METRIC = "reach"                           # alt: "views" (media views, ej unikt)
 IG_SECONDARY_METRIC = "views"
@@ -669,6 +672,21 @@ def _probe_recommendation(rows, do_fb, do_ig):
 # ---------------------------------------------------------------------------
 # FAS 1 — PRODUKTION
 # ---------------------------------------------------------------------------
+def _safe_write(writer, row):
+    """Skriv en rad men låt aldrig ett skrivfel döda hela körningen."""
+    try:
+        writer.write(row)
+    except Exception as e:
+        logger.error(f"Kunde inte skriva rad: {e}")
+
+
+def _log_run_summary(label, path, ok, skipped):
+    """Slutsummering per körning: antal lyckade + skippade med orsak."""
+    logger.info(f"[{label}] Sparad till {path}. {ok} ok, {len(skipped)} skippade/fel.")
+    for name, reason in skipped:
+        logger.info(f"[{label}]   skippad: {name} — {str(reason)[:160]}")
+
+
 FB_MONTH_FIELDS = ["Page", "Page ID", "Reach", "Period_start", "Period_end",
                    "Views_Source", "Status", "Comment"]
 FB_WEEK_FIELDS = ["page_id", "page_name", "year", "week", "start_date", "end_date",
@@ -696,21 +714,37 @@ def run_fb_month(api_version, year, month):
     path = os.path.join(out_dir("facebook", "month", year), f"FB_{year}_{month:02d}.csv")
     writer = AppendCsv(path, FB_MONTH_FIELDS)
     total = 0
+    ok = 0
+    skipped = []
     logger.info(f"[FB månad] {year}-{month:02d}: {len(pages)} sidor → {path}")
     for i, page in enumerate(pages, 1):
-        val, err = fetch_fb_page_metric(api_version, page, FB_VIEWERS_METRIC, FB_MONTH_PERIOD, since, until)
-        status = "OK" if err is None else "API_ERROR"
-        if val is not None:
-            total += val
-        writer.write({
-            "Page": page.name, "Page ID": page.page_id,
-            "Reach": val if val is not None else "",
-            "Period_start": p_start, "Period_end": p_end,
-            "Views_Source": src, "Status": status, "Comment": err or "",
-        })
-        logger.info(f"  [{i}/{len(pages)}] {page.name}: {val if val is not None else '—'}")
+        try:
+            val, err = fetch_fb_page_metric(api_version, page, FB_VIEWERS_METRIC, FB_MONTH_PERIOD, since, until)
+            status = "OK" if err is None else "API_ERROR"
+            if val is not None:
+                total += val
+            writer.write({
+                "Page": page.name, "Page ID": page.page_id,
+                "Reach": val if val is not None else "",
+                "Period_start": p_start, "Period_end": p_end,
+                "Views_Source": src, "Status": status, "Comment": err or "",
+            })
+            if err:
+                skipped.append((page.name, err))
+            else:
+                ok += 1
+            logger.info(f"  [{i}/{len(pages)}] {page.name}: {val if val is not None else '—'}")
+        except Exception as e:
+            skipped.append((page.name, f"exception: {e}"))
+            logger.warning(f"  [{i}/{len(pages)}] Hoppar över {page.name}: {e}")
+            _safe_write(writer, {
+                "Page": page.name, "Page ID": page.page_id,
+                "Period_start": p_start, "Period_end": p_end,
+                "Views_Source": src, "Status": "SKIPPED", "Comment": str(e)[:200],
+            })
     writer.close()
-    logger.info(f"[FB månad] Sparad till {path}. Total viewers: {total:,}")
+    _log_run_summary("FB månad", path, ok, skipped)
+    logger.info(f"[FB månad] Total viewers: {total:,}")
 
 
 def run_fb_week(api_version, iso_year, iso_week):
@@ -720,22 +754,39 @@ def run_fb_week(api_version, iso_year, iso_week):
     path = os.path.join(out_dir("facebook", "week", monday.year, monday.month),
                         f"week_{iso_week:02d}.csv")
     writer = AppendCsv(path, FB_WEEK_FIELDS)
+    ok = 0
+    skipped = []
     logger.info(f"[FB vecka] {iso_year}-W{iso_week:02d} ({monday}–{sunday}): {len(pages)} sidor → {path}")
     for i, page in enumerate(pages, 1):
-        val, err = fetch_fb_page_metric(api_version, page, FB_VIEWERS_METRIC, FB_WEEK_PERIOD,
-                                        monday.isoformat(), sunday.isoformat())
-        status = "OK" if err is None else "ERROR"
-        writer.write({
-            "page_id": page.page_id, "page_name": page.name,
-            "year": iso_year, "week": iso_week,
-            "start_date": monday.isoformat(), "end_date": sunday.isoformat(),
-            "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
-            "reach": val if val is not None else "",
-            "Views_Source": src, "status": status, "comment": err or "",
-        })
-        logger.info(f"  [{i}/{len(pages)}] {page.name}: {val if val is not None else '—'}")
+        try:
+            val, err = fetch_fb_page_metric(api_version, page, FB_VIEWERS_METRIC, FB_WEEK_PERIOD,
+                                            monday.isoformat(), sunday.isoformat())
+            status = "OK" if err is None else "ERROR"
+            writer.write({
+                "page_id": page.page_id, "page_name": page.name,
+                "year": iso_year, "week": iso_week,
+                "start_date": monday.isoformat(), "end_date": sunday.isoformat(),
+                "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
+                "reach": val if val is not None else "",
+                "Views_Source": src, "status": status, "comment": err or "",
+            })
+            if err:
+                skipped.append((page.name, err))
+            else:
+                ok += 1
+            logger.info(f"  [{i}/{len(pages)}] {page.name}: {val if val is not None else '—'}")
+        except Exception as e:
+            skipped.append((page.name, f"exception: {e}"))
+            logger.warning(f"  [{i}/{len(pages)}] Hoppar över {page.name}: {e}")
+            _safe_write(writer, {
+                "page_id": page.page_id, "page_name": page.name,
+                "year": iso_year, "week": iso_week,
+                "start_date": monday.isoformat(), "end_date": sunday.isoformat(),
+                "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
+                "reach": "", "Views_Source": src, "status": "SKIPPED", "comment": str(e)[:200],
+            })
     writer.close()
-    logger.info(f"[FB vecka] Sparad till {path}.")
+    _log_run_summary("FB vecka", path, ok, skipped)
 
 
 def run_ig_month(api_version, year, month):
@@ -745,26 +796,42 @@ def run_ig_month(api_version, year, month):
     path = os.path.join(out_dir("instagram", "month", year), f"IG_{year}_{month:02d}.csv")
     writer = AppendCsv(path, IG_MONTH_FIELDS)
     total_r = total_v = 0
+    ok = 0
+    skipped = []
     logger.info(f"[IG månad] {year}-{month:02d}: {len(accounts)} konton → {path}")
     for i, acc in enumerate(accounts, 1):
-        reach, err_r = fetch_ig_metric(api_version, acc.ig_id, IG_VIEWERS_METRIC, since_ts, until_ts)
-        views, err_v = fetch_ig_metric(api_version, acc.ig_id, IG_SECONDARY_METRIC, since_ts, until_ts)
-        followers = fetch_ig_followers(api_version, acc.ig_id)
-        errs = [e for e in (err_r, err_v) if e]
-        status = "OK" if not errs else "API_ERROR"
-        if reach:
-            total_r += reach
-        if views:
-            total_v += views
-        writer.write({
-            "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
-            "Reach": reach if reach is not None else "", "Views": views if views is not None else "",
-            "Followers": followers, "Period_start": p_start, "Period_end": p_end,
-            "Views_Source": src, "Status": status, "Comment": "; ".join(errs[:3]),
-        })
-        logger.info(f"  [{i}/{len(accounts)}] @{acc.ig_username}: reach={reach}, views={views}")
+        try:
+            reach, err_r = fetch_ig_metric(api_version, acc.ig_id, IG_VIEWERS_METRIC, since_ts, until_ts)
+            views, err_v = fetch_ig_metric(api_version, acc.ig_id, IG_SECONDARY_METRIC, since_ts, until_ts)
+            followers = fetch_ig_followers(api_version, acc.ig_id)
+            errs = [e for e in (err_r, err_v) if e]
+            status = "OK" if not errs else "API_ERROR"
+            if reach:
+                total_r += reach
+            if views:
+                total_v += views
+            writer.write({
+                "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
+                "Reach": reach if reach is not None else "", "Views": views if views is not None else "",
+                "Followers": followers, "Period_start": p_start, "Period_end": p_end,
+                "Views_Source": src, "Status": status, "Comment": "; ".join(errs[:3]),
+            })
+            if errs:
+                skipped.append((acc.ig_username, "; ".join(errs[:2])))
+            else:
+                ok += 1
+            logger.info(f"  [{i}/{len(accounts)}] @{acc.ig_username}: reach={reach}, views={views}")
+        except Exception as e:
+            skipped.append((acc.ig_username, f"exception: {e}"))
+            logger.warning(f"  [{i}/{len(accounts)}] Hoppar över @{acc.ig_username}: {e}")
+            _safe_write(writer, {
+                "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
+                "Period_start": p_start, "Period_end": p_end,
+                "Views_Source": src, "Status": "SKIPPED", "Comment": str(e)[:200],
+            })
     writer.close()
-    logger.info(f"[IG månad] Sparad till {path}. reach={total_r:,}, views={total_v:,}")
+    _log_run_summary("IG månad", path, ok, skipped)
+    logger.info(f"[IG månad] reach={total_r:,}, views={total_v:,}")
     logger.info("OBS: IG reach = enbart organisk; viewers ≠ gammal FB-reach (definitionsbrott).")
 
 
@@ -778,22 +845,38 @@ def run_ig_week(api_version, iso_year, iso_week):
     path = os.path.join(out_dir("instagram", "week", monday.year, monday.month),
                         f"week_{iso_week:02d}.csv")
     writer = AppendCsv(path, IG_WEEK_FIELDS)
+    ok = 0
+    skipped = []
     logger.info(f"[IG vecka] {iso_year}-W{iso_week:02d} ({monday}–{sunday}): {len(accounts)} konton → {path}")
     for i, acc in enumerate(accounts, 1):
-        reach, err_r = fetch_ig_metric(api_version, acc.ig_id, IG_VIEWERS_METRIC, since_ts, until_ts)
-        views, err_v = fetch_ig_metric(api_version, acc.ig_id, IG_SECONDARY_METRIC, since_ts, until_ts)
-        errs = [e for e in (err_r, err_v) if e]
-        writer.write({
-            "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
-            "year": iso_year, "week": iso_week,
-            "Reach": reach if reach is not None else "", "Views": views if views is not None else "",
-            "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
-            "Views_Source": src, "Status": "OK" if not errs else "API_ERROR",
-            "Comment": "; ".join(errs[:3]),
-        })
-        logger.info(f"  [{i}/{len(accounts)}] @{acc.ig_username}: reach={reach}, views={views}")
+        try:
+            reach, err_r = fetch_ig_metric(api_version, acc.ig_id, IG_VIEWERS_METRIC, since_ts, until_ts)
+            views, err_v = fetch_ig_metric(api_version, acc.ig_id, IG_SECONDARY_METRIC, since_ts, until_ts)
+            errs = [e for e in (err_r, err_v) if e]
+            writer.write({
+                "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
+                "year": iso_year, "week": iso_week,
+                "Reach": reach if reach is not None else "", "Views": views if views is not None else "",
+                "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
+                "Views_Source": src, "Status": "OK" if not errs else "API_ERROR",
+                "Comment": "; ".join(errs[:3]),
+            })
+            if errs:
+                skipped.append((acc.ig_username, "; ".join(errs[:2])))
+            else:
+                ok += 1
+            logger.info(f"  [{i}/{len(accounts)}] @{acc.ig_username}: reach={reach}, views={views}")
+        except Exception as e:
+            skipped.append((acc.ig_username, f"exception: {e}"))
+            logger.warning(f"  [{i}/{len(accounts)}] Hoppar över @{acc.ig_username}: {e}")
+            _safe_write(writer, {
+                "ig_username": acc.ig_username, "ig_name": acc.ig_name, "fb_page_name": acc.fb_page_name,
+                "year": iso_year, "week": iso_week,
+                "Period_start": monday.isoformat(), "Period_end": sunday.isoformat(),
+                "Views_Source": src, "Status": "SKIPPED", "Comment": str(e)[:200],
+            })
     writer.close()
-    logger.info(f"[IG vecka] Sparad till {path}.")
+    _log_run_summary("IG vecka", path, ok, skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -822,19 +905,29 @@ def build_parser():
     p.add_argument("--iso-week", dest="iso_week", help="Målvecka YYYY-Www (annars senast avslutade).")
     p.add_argument("--api-version", dest="api_version",
                    help="Override av Graph API-version (default = config.py). Använd för att probe:a v25.0+.")
+    p.add_argument("--output-dir", dest="output_dir",
+                   help="Override av output-rot (default = config.OUTPUT_ROOT eller aktuell katalog). "
+                        "Använd för torrkörning mot temp-mapp.")
     p.add_argument("--debug", action="store_true", help="Debug-loggning.")
     return p
 
 
 def main():
+    global OUTPUT_ROOT
     args = build_parser().parse_args()
     setup_logging(args.debug)
 
+    # §1C — fail-fast på saknad obligatorisk config innan någon data hämtas.
     if not ACCESS_TOKEN:
-        logger.error("ACCESS_TOKEN saknas i config.py.")
+        logger.error("ACCESS_TOKEN saknas/tom i config.py — avbryter (fail-fast).")
         sys.exit(1)
 
+    if args.output_dir:
+        OUTPUT_ROOT = args.output_dir
+
     api_version = _api_version(args.api_version)
+    logger.info(f"Config: API_VERSION={api_version} (config.py={CONFIG_API_VERSION}), "
+                f"OUTPUT_ROOT={OUTPUT_ROOT}, INITIAL_START={INITIAL_START_YEAR_MONTH}")
     if api_version != CONFIG_API_VERSION:
         logger.info(f"Använder API-version {api_version} (override; config.py={CONFIG_API_VERSION}).")
 
