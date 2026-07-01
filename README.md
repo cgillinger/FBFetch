@@ -148,7 +148,18 @@ read_insights
 
 ### Viewers — `fetch_viewers.py` (rekommenderas)
 
-Konsoliderat skript för både Facebook och Instagram, månad och vecka. Hämtar Metas nya Viewers/Media-Views-mått (FB `page_total_media_view_unique`, IG `reach`/`views`) till separata mappar per plattform och granularitet. Kräver Graph API **v25.0+** (sätt `API_VERSION` i `config.py` eller använd `--api-version`).
+Konsoliderat skript för både Facebook och Instagram, månad och vecka. Hämtar Metas nya Viewers/Media-Views-mått till separata mappar per plattform och granularitet. Kräver Graph API **v25.0+** (sätt `API_VERSION` i `config.py` eller använd `--api-version`).
+
+**Mått & perioder (faktiska, verifierade 2026-07):**
+
+| Plattform | Granularitet | Mått | Period / metod |
+|-----------|--------------|------|----------------|
+| Facebook | månad | `page_total_media_view_unique` | `total_over_range` över kalendermånaden (unikt, dedupat) |
+| Facebook | vecka | `page_total_media_view_unique` | `total_over_range` över mån–sön |
+| Instagram | månad | `reach` (+ `views`) | `metric_type=total_value`, hårt 30-dagarsfönster |
+| Instagram | vecka | `reach` (+ `views`) | `metric_type=total_value`, 7-dagarsfönster |
+
+> ⚠️ **FB vecka använder `total_over_range`, INTE `period=week`.** Metas `period=week` returnerar ett *rullande 7-dagarsvärde per dag*; summering av datapunkterna blåser upp veckotalet ~6–9× (verifierat). `total_over_range` över mån–sön ger korrekt unikt veckotal. Invarianterna håller: **vecka ≤ månad ≤ summa av veckor**.
 
 ```bash
 # Fas 0 — sondera vad som går att hämta (skriver bara till probe_results/)
