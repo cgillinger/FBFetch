@@ -3,8 +3,12 @@
 > Automatiserad datainsamling från Facebook och Instagram via Meta Graph API — räckvidd, interaktioner, kommentarer och DM:s exporteras till CSV.
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue?logo=python&logoColor=white)
-![Meta Graph API](https://img.shields.io/badge/Meta%20Graph%20API-v20.0-1877F2?logo=facebook&logoColor=white)
+![Meta Graph API](https://img.shields.io/badge/Meta%20Graph%20API-v25.0-1877F2?logo=facebook&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
+
+---
+
+> ⛔ **Viktigt (2026-06-15):** Metas gamla räckviddsmått (`page_impressions_unique` m.fl.) är **deprekerade i alla Graph API-versioner**. Skripten med prefix `DEPRECATED_` fungerar därför inte längre och behålls endast som referens. Använd i stället **`fetch_viewers.py`** (se [Användning](#användning)), som hämtar Metas nya Viewers/Media-Views-familj. Kräver Graph API **v25.0+**.
 
 ---
 
@@ -38,9 +42,7 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 
 | Skript | Beskrivning |
 |--------|-------------|
-| `fetch_facebook_reach_weekly.py` | **Veckovis** räckvidd och interaktioner per Facebook-sida |
-| `fetch_facebook_reach.py` | **Månadsvis** räckvidd och interaktioner per Facebook-sida |
-| `fetch_facebook_reach_no_click.py` | Räckvidd utan klick-mätvärden |
+| `fetch_viewers.py` | **⭐ Rekommenderas.** Konsoliderad Viewers/Media-Views för Facebook **+** Instagram, månad **och** vecka. Ersätter de deprekerade reach-skripten. |
 | `fetch_facebook_comments.py` | Kommentarer på Facebook-inlägg |
 | `fetch_facebook_dms.py` | Direktmeddelanden (DM) från Facebook-sidor |
 | `fetch_instagram_posts_ver4_6.py` | Instagram-inlägg, räckvidd och engagemang |
@@ -49,6 +51,15 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 | `check_token_permissions.py` | Kontrollera token-behörigheter och sidåtkomst |
 | `permissions_check.py` | Verifierar API-behörigheter |
 | `instagram-permission-checker.py` | Verifierar Instagram-behörigheter |
+
+### ⛔ Deprekerade skript (fungerar ej — döda mått sedan 2026-06-15)
+
+| Skript | Ersätts av |
+|--------|-----------|
+| `DEPRECATED_fetch_facebook_reach_weekly.py` | `fetch_viewers.py --facebook --week` |
+| `DEPRECATED_fetch_facebook_reach.py` | `fetch_viewers.py --facebook --month` |
+| `DEPRECATED_fetch_facebook_reach_no_click.py` | `fetch_viewers.py --facebook` |
+| `DEPRECATED_fetch_instagram_reach.py` | `fetch_viewers.py --instagram --month` |
 
 ---
 
@@ -93,8 +104,8 @@ ACCESS_TOKEN = "EAAiY..."
 TOKEN_LAST_UPDATED = "2025-05-12"
 TOKEN_VALID_DAYS   = 60
 
-# API-version (uppdatera vid behov)
-API_VERSION = "v20.0"
+# API-version — v25.0+ krävs för Viewers/Media-Views-måtten (fetch_viewers.py)
+API_VERSION = "v25.0"
 ```
 
 Token kan också anges via miljövariabel om du föredrar det:
@@ -134,7 +145,55 @@ read_insights
 
 ## Användning
 
-### Veckovis räckvidd (`fetch_facebook_reach_weekly.py`)
+### Viewers — `fetch_viewers.py` (rekommenderas)
+
+Konsoliderat skript för både Facebook och Instagram, månad och vecka. Hämtar Metas nya Viewers/Media-Views-mått (FB `page_total_media_view_unique`, IG `reach`/`views`) till separata mappar per plattform och granularitet. Kräver Graph API **v25.0+** (sätt `API_VERSION` i `config.py` eller använd `--api-version`).
+
+```bash
+# Fas 0 — sondera vad som går att hämta (skriver bara till probe_results/)
+python fetch_viewers.py --probe --facebook --instagram --sample 3
+
+# Produktion — senast avslutade period
+python fetch_viewers.py --facebook --month
+python fetch_viewers.py --instagram --week
+python fetch_viewers.py --facebook --instagram --month --week
+
+# Specifik period
+python fetch_viewers.py --facebook --month --year-month 2026-05
+python fetch_viewers.py --instagram --week --iso-week 2026-W23
+```
+
+**Kommandoradsargument:**
+
+| Argument | Beskrivning |
+|----------|-------------|
+| `--facebook` / `--instagram` | Plattform(ar) att hämta (minst en krävs) |
+| `--month` / `--week` | Granularitet (minst en krävs; ej med `--probe`) |
+| `--probe` | Fas 0-sondering; skriver endast `probe_results/`, kör aldrig produktion |
+| `--sample N` | Antal sidor/konton i probe (default 3) |
+| `--year-month YYYY-MM` | Målmånad (annars senast avslutade) |
+| `--iso-week YYYY-Www` | Målvecka (annars senast avslutade) |
+| `--group NAMN` | Valfri filtrering via `groups.json` |
+| `--api-version vXX.0` | Override av Graph API-version (default = `config.py`) |
+
+**Utdata** hamnar i `Facebook/` respektive `Instagram/`:
+
+```
+Facebook/
+├── month/2026/FB_2026_06.csv
+└── week/2026_06/week_26.csv
+Instagram/
+├── month/2026/IG_2026_06.csv
+└── week/2026_06/week_26.csv
+```
+
+CSV:erna innehåller `Period_start`/`Period_end` samt en `Views_Source`-kolumn (`mått@API-version`) — eftersom det nya viewers-måttet inte är identiskt med gammal reach markeras definitionsbytet där. Varje sidas rad skrivs och flushas direkt (krasch-säkert), aldrig batch-sparning i slutet.
+
+> **Instagram:** hårt 30-dagarsfönster per månad (Metas gräns). IG-reach är enbart organisk.
+
+---
+
+### ⛔ Veckovis räckvidd (`DEPRECATED_fetch_facebook_reach_weekly.py`) — deprekerat
 
 Huvudskriptet för veckorapporter. Hämtar `page_impressions_unique` (räckvidd) och `page_post_engagements` (interaktioner) per Facebook-sida.
 
@@ -167,20 +226,13 @@ python fetch_facebook_reach_weekly.py --pages-json mina_sidor.json
 
 ---
 
-### Månadsvis räckvidd (`fetch_facebook_reach.py`)
+### ⛔ Månadsvis räckvidd (`DEPRECATED_fetch_facebook_reach.py`) — deprekerat
+
+> Fungerar ej längre — använd `fetch_viewers.py --facebook --month`. Behålls som referens.
 
 ```bash
-# Alla månader från startdatum
-python fetch_facebook_reach.py
-
-# Specifik månad
-python fetch_facebook_reach.py --month 2025-04
-
-# Uppdatera alla sidor i befintliga rapporter
-python fetch_facebook_reach.py --update-all
-
-# Kontrollera och komplettera nya sidor i alla befintliga månader
-python fetch_facebook_reach.py --check-new
+# (deprekerat, döda mått)
+python DEPRECATED_fetch_facebook_reach.py --month 2025-04
 ```
 
 ---
@@ -256,8 +308,11 @@ crontab -e
 ```
 
 ```cron
-# Kör varje måndag kl 06:00 — hämtar föregående vecka automatiskt
-0 6 * * 1 cd /opt/fbfetch && python fetch_facebook_reach_weekly.py >> logs/cron.log 2>&1
+# Kör varje måndag kl 06:00 — hämtar föregående vecka automatiskt (FB + IG)
+0 6 * * 1 cd /opt/fbfetch && python fetch_viewers.py --facebook --instagram --week >> logs/cron.log 2>&1
+
+# Månadsvis den 2:a kl 07:00 — föregående månad
+0 7 2 * * cd /opt/fbfetch && python fetch_viewers.py --facebook --instagram --month >> logs/cron.log 2>&1
 ```
 
 ### Docker
