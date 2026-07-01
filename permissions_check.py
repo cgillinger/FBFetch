@@ -17,7 +17,8 @@ os.makedirs(EXPORT_PATH, exist_ok=True)
 REQUIRED_SCOPES = {
     "pages_show_list",           # Lista sidor
     "pages_read_engagement",     # Läsa engagemang
-    "read_insights",             # Läsa insights (reach-skriptet)
+    "read_insights",             # Läsa insights (reach/viewers-skripten)
+    "pages_read_user_content",   # Läsa kommentarer (fetch_facebook_comments*.py) — annars falsk trygghet
 }
 
 OPTIONAL_SCOPES = {
