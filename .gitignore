@@ -3,10 +3,15 @@
 # ======================
 # KÄNSLIG KONFIGURATION
 # ======================
-config.py              # Innehåller access token - ska ALDRIG synkas
-*.token                 # Alla token-filer
-*.key                   # Nyckelfiler
-secrets.json            # Eventuella secrets-filer
+# OBS: inline-kommentarer stöds INTE i .gitignore (bröt tidigare config.py-regeln).
+# Innehåller access token - ska ALDRIG synkas:
+config.py
+# Alla token-filer:
+*.token
+# Nyckelfiler:
+*.key
+# Eventuella secrets-filer:
+secrets.json
 
 # ======================
 # WINDOWS-SPECIFIKA FILER
@@ -166,3 +171,12 @@ tramp
 # ======================
 # Git merge conflict files
 *.orig
+
+# ======================
+# NODE / GENERERADE UTDATA
+# ======================
+node_modules/
+probe_results/
+# Nya produktionsmappar (fetch_viewers.py) — data, ej kod:
+Facebook/
+Instagram/

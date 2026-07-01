@@ -1,0 +1,11 @@
+{
+  "_comment": "Valfri gruppfiltrering för fetch_viewers.py --group NAME. Matchar mot sidnamn (FB) / fb_page_name (IG), skiftlägesokänsligt substräng. Definiera egna grupper nedan. 'test' används för snabb verifiering.",
+  "test": ["Barnradion"],
+  "p4lokalt": [],
+  "riks": [],
+  "p1": [],
+  "p2": [],
+  "p3": [],
+  "ekot": [],
+  "minoritet": []
+}
