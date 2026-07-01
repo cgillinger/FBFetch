@@ -314,30 +314,6 @@ def list_ig_accounts(api_version):
     return accounts
 
 
-def apply_group_filter(items, group, name_attr):
-    """
-    Valfri gruppfiltrering via groups.json ({"grupp": ["namn-substräng", ...]}).
-    OBS: Inget grupp-taxonomi fanns i de gamla skripten — detta är net-new. Om groups.json
-    saknas eller gruppen är okänd bearbetas ALLA (med varning), så flödet aldrig bryts.
-    """
-    if not group:
-        return items
-    if not os.path.exists("groups.json"):
-        logger.warning(f"--group {group} angavs men groups.json saknas — bearbetar alla.")
-        return items
-    import json
-    with open("groups.json", encoding="utf-8") as f:
-        groups = json.load(f)
-    patterns = groups.get(group)
-    if not patterns:
-        logger.warning(f"Gruppen '{group}' finns inte i groups.json — bearbetar alla.")
-        return items
-    pats = [p.lower() for p in patterns]
-    out = [it for it in items if any(p in (getattr(it, name_attr) or "").lower() for p in pats)]
-    logger.info(f"Grupp '{group}': {len(out)}/{len(items)} enheter matchade.")
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Datum-logik
 # ---------------------------------------------------------------------------
@@ -713,8 +689,8 @@ def out_dir(platform, granularity, year, month=None):
     return os.path.join(OUTPUT_ROOT, plat, "week", f"{year}_{month:02d}")
 
 
-def run_fb_month(api_version, year, month, group):
-    pages = apply_group_filter(list_fb_pages(api_version), group, "name")
+def run_fb_month(api_version, year, month):
+    pages = list_fb_pages(api_version)
     since, until, p_start, p_end = month_bounds_calendar(year, month)
     src = viewers_source_tag(FB_VIEWERS_METRIC, api_version)
     path = os.path.join(out_dir("facebook", "month", year), f"FB_{year}_{month:02d}.csv")
@@ -737,8 +713,8 @@ def run_fb_month(api_version, year, month, group):
     logger.info(f"[FB månad] Sparad till {path}. Total viewers: {total:,}")
 
 
-def run_fb_week(api_version, iso_year, iso_week, group):
-    pages = apply_group_filter(list_fb_pages(api_version), group, "name")
+def run_fb_week(api_version, iso_year, iso_week):
+    pages = list_fb_pages(api_version)
     monday, sunday = iso_week_bounds(iso_year, iso_week)
     src = viewers_source_tag(FB_VIEWERS_METRIC, api_version)
     path = os.path.join(out_dir("facebook", "week", monday.year, monday.month),
@@ -762,8 +738,8 @@ def run_fb_week(api_version, iso_year, iso_week, group):
     logger.info(f"[FB vecka] Sparad till {path}.")
 
 
-def run_ig_month(api_version, year, month, group):
-    accounts = apply_group_filter(list_ig_accounts(api_version), group, "fb_page_name")
+def run_ig_month(api_version, year, month):
+    accounts = list_ig_accounts(api_version)
     since_ts, until_ts, p_start, p_end = month_bounds_ig_30day(year, month)
     src = viewers_source_tag(IG_VIEWERS_METRIC, api_version)
     path = os.path.join(out_dir("instagram", "month", year), f"IG_{year}_{month:02d}.csv")
@@ -792,9 +768,9 @@ def run_ig_month(api_version, year, month, group):
     logger.info("OBS: IG reach = enbart organisk; viewers ≠ gammal FB-reach (definitionsbrott).")
 
 
-def run_ig_week(api_version, iso_year, iso_week, group):
+def run_ig_week(api_version, iso_year, iso_week):
     """Net-new: ingen IG-vecka fanns tidigare. 30-dagarsgränsen gäller inte veckofönster."""
-    accounts = apply_group_filter(list_ig_accounts(api_version), group, "fb_page_name")
+    accounts = list_ig_accounts(api_version)
     monday, sunday = iso_week_bounds(iso_year, iso_week)
     since_ts = int(datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc).timestamp())
     until_ts = since_ts + (7 * 86400)
@@ -844,7 +820,6 @@ def build_parser():
     p.add_argument("--sample", type=int, default=3, help="Antal sidor/konton i probe (default 3).")
     p.add_argument("--year-month", dest="year_month", help="Målmånad YYYY-MM (annars senast avslutade).")
     p.add_argument("--iso-week", dest="iso_week", help="Målvecka YYYY-Www (annars senast avslutade).")
-    p.add_argument("--group", help="Valfri gruppfiltrering via groups.json (net-new, se README).")
     p.add_argument("--api-version", dest="api_version",
                    help="Override av Graph API-version (default = config.py). Använd för att probe:a v25.0+.")
     p.add_argument("--debug", action="store_true", help="Debug-loggning.")
@@ -896,9 +871,9 @@ def main():
     if args.month:
         y, m = ym if ym else last_complete_month()
         if args.facebook:
-            run_fb_month(api_version, y, m, args.group)
+            run_fb_month(api_version, y, m)
         if args.instagram:
-            run_ig_month(api_version, y, m, args.group)
+            run_ig_month(api_version, y, m)
 
     if args.week:
         if iso:
@@ -906,9 +881,9 @@ def main():
         else:
             iy, iw, _, _ = last_complete_iso_week()
         if args.facebook:
-            run_fb_week(api_version, iy, iw, args.group)
+            run_fb_week(api_version, iy, iw)
         if args.instagram:
-            run_ig_week(api_version, iy, iw, args.group)
+            run_ig_week(api_version, iy, iw)
 
     logger.info("Klar.")
 

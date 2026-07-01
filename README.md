@@ -43,7 +43,8 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 | Skript | Beskrivning |
 |--------|-------------|
 | `fetch_viewers.py` | **⭐ Rekommenderas.** Konsoliderad Viewers/Media-Views för Facebook **+** Instagram, månad **och** vecka. Ersätter de deprekerade reach-skripten. |
-| `fetch_facebook_comments.py` | Kommentarer på Facebook-inlägg |
+| `fetch_facebook_comments.py` | Kommentarer på Facebook-inlägg — **räknare** (aggregerade antal per sida/månad), med `--filter`-grupper (p4lokalt/riks/…) |
+| `fetch_facebook_comments_ver2.py` | Kommentarer på Facebook-inlägg — **fullständig exportör** (varje kommentar + svar, checkpoint, `--clean`). Speglar versionen som körs på server2. |
 | `fetch_facebook_dms.py` | Direktmeddelanden (DM) från Facebook-sidor |
 | `fetch_instagram_posts_ver4_6.py` | Instagram-inlägg, räckvidd och engagemang |
 | `demographics.py` | Demografidata för sidor |
@@ -173,7 +174,6 @@ python fetch_viewers.py --instagram --week --iso-week 2026-W23
 | `--sample N` | Antal sidor/konton i probe (default 3) |
 | `--year-month YYYY-MM` | Målmånad (annars senast avslutade) |
 | `--iso-week YYYY-Www` | Målvecka (annars senast avslutade) |
-| `--group NAMN` | Valfri filtrering via `groups.json` |
 | `--api-version vXX.0` | Override av Graph API-version (default = `config.py`) |
 
 **Utdata** hamnar i `Facebook/` respektive `Instagram/`:
