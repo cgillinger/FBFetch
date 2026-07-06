@@ -1,0 +1,29 @@
+# Håll Docker-imagen fri från hemligheter och lokal data.
+# OBS: config.py innehåller ACCESS_TOKEN — den monteras in read-only av
+# docker-compose på server2 och får ALDRIG bakas in i imagelagren.
+config.py
+.env
+
+.git
+.gitignore
+__pycache__/
+*.bak
+*.log
+logs/
+node_modules/
+deploy_staging/
+probe_results/
+
+# Lokal output — hör inte hemma i imagen
+Facebook/
+Instagram/
+IGReach*/
+reach*/
+status*/
+weekly_reports/
+*.csv
+
+# Dokumentation behövs inte i imagen
+*.md
+*.pdf
+LICENSE
