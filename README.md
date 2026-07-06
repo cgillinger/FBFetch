@@ -1,6 +1,6 @@
 # FBFetch
 
-> Automatiserad datainsamling från Facebook och Instagram via Meta Graph API — räckvidd, interaktioner, kommentarer och DM:s exporteras till CSV.
+> Automatiserad datainsamling från Facebook och Instagram via Meta Graph API — viewers, interaktioner, kommentarer, DM:s och sidstatus exporteras till CSV.
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue?logo=python&logoColor=white)
 ![Meta Graph API](https://img.shields.io/badge/Meta%20Graph%20API-v25.0-1877F2?logo=facebook&logoColor=white)
@@ -8,7 +8,7 @@
 
 ---
 
-> ⛔ **Viktigt (2026-06-15):** Metas gamla räckviddsmått (`page_impressions_unique` m.fl.) är **deprekerade i alla Graph API-versioner**. Skripten med prefix `DEPRECATED_` fungerar därför inte längre och behålls endast som referens. Använd i stället **`fetch_viewers.py`** (se [Användning](#användning)), som hämtar Metas nya Viewers/Media-Views-familj. Kräver Graph API **v25.0+**.
+> ⛔ **Viktigt (2026-06-15):** Metas gamla räckviddsmått (`page_impressions_unique` m.fl.) är **deprekerade i alla Graph API-versioner** — se [Metas Page Insights-dokumentation](https://developers.facebook.com/docs/graph-api/reference/page/insights/). De gamla reach-skripten är borttagna ur repot och finns i git-historiken under taggen [`pre-viewers-cleanup`](../../tree/pre-viewers-cleanup). Använd **`fetch_viewers.py`** (se [Användning](#användning)), som hämtar Metas nya Viewers/Media-Views-familj. Kräver Graph API **v25.0+**.
 
 ---
 
@@ -44,19 +44,21 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 |--------|-------------|
 | `fetch_viewers.py` | **⭐ Rekommenderas.** Konsoliderad Viewers/Media-Views för Facebook **+** Instagram, månad **och** vecka. Ersätter de deprekerade reach-skripten. |
 | `fetch_facebook_comments.py` | Kommentarer på Facebook-inlägg — **räknare** (aggregerade antal per sida/månad), med `--filter`-grupper (p4lokalt/riks/…) |
-| `fetch_facebook_comments_ver2.py` | Kommentarer på Facebook-inlägg — **fullständig exportör** (varje kommentar + svar, checkpoint, `--clean`). Speglar versionen som körs på server2. |
 | `fetch_facebook_dms.py` | Direktmeddelanden (DM) från Facebook-sidor |
-| `fetch_instagram_posts_ver4_6.py` | Instagram-inlägg, räckvidd och engagemang |
+| `fetch_instagram_posts.py` | Instagram-inlägg, räckvidd och engagemang |
+| `fetch_page_status.py` | Integritetsstatus per sida via Page Integrity API — ögonblicksbild till CSV (ingen historik, stämplas med `run_date`) |
 | `demographics.py` | Demografidata för sidor |
 | `diagnostics.py` | Diagnostik och felsökningsverktyg |
-| `check_token_permissions.py` | Kontrollera token-behörigheter och sidåtkomst |
-| `permissions_check.py` | Verifierar API-behörigheter |
-| `instagram-permission-checker.py` | Verifierar Instagram-behörigheter |
+| `permissions_check.py` | Verifierar token-behörigheter och sidåtkomst; `--instagram` testar även länkade Instagram-konton och insights-åtkomst |
 
-### ⛔ Deprekerade skript (fungerar ej — döda mått sedan 2026-06-15)
+> **Kommentarsexportören** (fullständig export av varje kommentar + svar) bor i ett eget repo: [cgillinger/fetch_comments](https://github.com/cgillinger/fetch_comments). Det är den versionen som körs schemalagt på servern — uppdateringar görs där, inte här.
 
-| Skript | Ersätts av |
-|--------|-----------|
+### ⛔ Borttagna reach-skript (döda mått sedan 2026-06-15)
+
+De gamla skripten finns i git-historiken under taggen [`pre-viewers-cleanup`](../../tree/pre-viewers-cleanup):
+
+| Skript (borttaget) | Ersätts av |
+|--------------------|-----------|
 | `DEPRECATED_fetch_facebook_reach_weekly.py` | `fetch_viewers.py --facebook --week` |
 | `DEPRECATED_fetch_facebook_reach.py` | `fetch_viewers.py --facebook --month` |
 | `DEPRECATED_fetch_facebook_reach_no_click.py` | `fetch_viewers.py --facebook` |
@@ -67,10 +69,11 @@ FBFetch är en samling Python-skript för att hämta statistik från Facebook-si
 ## Krav
 
 - Python 3.8+
-- `requests`
+- `requests` (alla skript)
+- `pandas` + `openpyxl` (endast `fetch_instagram_posts.py` och `demographics.py`)
 
 ```bash
-pip install requests
+pip install -r requirements.txt
 ```
 
 ---
@@ -80,7 +83,7 @@ pip install requests
 ```bash
 git clone https://github.com/cgillinger/FBFetch.git
 cd FBFetch
-pip install requests
+pip install -r requirements.txt
 
 # Skapa din konfigurationsfil
 cp config.py.example config.py
@@ -138,6 +141,9 @@ export META_ACCESS_TOKEN="EAAiY..."
 pages_read_engagement
 pages_show_list
 read_insights
+pages_read_user_content      # kommentarer (fetch_facebook_comments.py)
+instagram_basic              # Instagram-skripten
+instagram_manage_insights    # Instagram-skripten
 ```
 
 > Tokens är giltiga i 60 dagar. Skriptet varnar automatiskt när utgångsdatum närmar sig.
@@ -204,85 +210,15 @@ CSV:erna innehåller `Period_start`/`Period_end` samt en `Views_Source`-kolumn (
 
 ---
 
-### ⛔ Veckovis räckvidd (`DEPRECATED_fetch_facebook_reach_weekly.py`) — deprekerat
-
-Huvudskriptet för veckorapporter. Hämtar `page_impressions_unique` (räckvidd) och `page_post_engagements` (interaktioner) per Facebook-sida.
-
-```bash
-# Alla veckor från startdatum i config.py (hoppar över redan hämtade)
-python fetch_facebook_reach_weekly.py
-
-# Specifik månad
-python fetch_facebook_reach_weekly.py --month 2025-05
-
-# Specifik vecka (ISO-format)
-python fetch_facebook_reach_weekly.py --week 2025-W19
-
-# Anpassa startdatum utan att ändra config.py
-python fetch_facebook_reach_weekly.py --start 2025-03
-
-# Begränsa till ett urval sidor via JSON-fil
-python fetch_facebook_reach_weekly.py --pages-json mina_sidor.json
-```
-
-**Kommandoradsargument:**
-
-| Argument | Beskrivning |
-|----------|-------------|
-| `--month YYYY-MM` | Kör endast för angiven månad |
-| `--week YYYY-Www` | Kör endast för angiven ISO-vecka |
-| `--start YYYY-MM` | Overrida startdatum från config.py |
-| `--pages-json FIL` | JSON-fil med sidurval `[{"id": "...", "name": "..."}]` |
-| `--no-combine` | Hoppa över skapandet av `combined.csv` |
-
----
-
-### ⛔ Månadsvis räckvidd (`DEPRECATED_fetch_facebook_reach.py`) — deprekerat
-
-> Fungerar ej längre — använd `fetch_viewers.py --facebook --month`. Behålls som referens.
-
-```bash
-# (deprekerat, döda mått)
-python DEPRECATED_fetch_facebook_reach.py --month 2025-04
-```
-
----
-
 ## Utdataformat
 
-### Veckorapporter
-
-Sparas under `weekly_reports/YYYY_MM/`:
-
-```
-weekly_reports/
-└── 2025_05/
-    ├── week_19.csv
-    ├── week_20.csv
-    ├── week_21.csv
-    └── combined.csv       ← Alla veckor i månaden sammanfogade
-```
-
-**Kolumner i vecko-CSV:**
-
-| Kolumn | Beskrivning |
-|--------|-------------|
-| `page_id` | Facebook-sidans ID |
-| `page_name` | Sidans namn |
-| `year` | År |
-| `week` | ISO-veckonummer |
-| `start_date` | Veckans startdatum (måndag) |
-| `end_date` | Veckans slutdatum (söndag) |
-| `reach` | Unik räckvidd (`page_impressions_unique`) |
-| `engagements` | Interaktioner (`page_post_engagements`) |
-| `status` | `OK` / `NO_ACTIVITY` / `NO_DATA` / `ERROR` |
-| `comment` | Eventuell felkommentar |
+Utdatastrukturen för `fetch_viewers.py` visas under [Användning](#användning). Varje CSV innehåller `Period_start`/`Period_end` samt `Views_Source` — läs alltid periodkolumnerna, aldrig filnamnsetiketten.
 
 ### Loggfiler
 
 ```
 logs/
-└── facebook_reach_weekly_2025-05-19_08-30-00.log
+└── fetch_viewers_2026-07-06_08-30-00.log
 ```
 
 ---
@@ -296,7 +232,8 @@ Skaffa en ny token enligt [instruktionerna ovan](#access-token) och uppdatera `c
 Kontrollera att token har behörigheterna `pages_show_list` och `pages_read_engagement`, och att systemanvändaren har tilldelats sidorna.
 
 ```bash
-python check_token_permissions.py
+python permissions_check.py              # Facebook
+python permissions_check.py --instagram  # + Instagram-konton och insights
 ```
 
 ### Rate limit
@@ -306,7 +243,7 @@ Skriptet hanterar `429`-svar automatiskt med exponentiell backoff och respektera
 Placeholder-sidor med namnmönstret `Srholder*` (t.ex. `Srholder9a`, `SRholder8g`) filtreras automatiskt bort. Kontrollera att sidnamnet matchar mönstret `^[Ss][Rr]holder\w*$`.
 
 ### Diskrepans mot Facebook Insights
-Skriptet använder `period=week` med `page_impressions_unique`, samma metrik som Facebook Insights visar för veckovärden. Små avvikelser (±1–2%) kan förekomma beroende på tidzonhantering.
+`fetch_viewers.py` hämtar veckovärden med `total_over_range` (unikt, dedupat över mån–sön) — **inte** `period=week`, som ger rullande 7-dagarsvärden och blåser upp summerade veckotal ~6–9×. Små avvikelser mot Metas UI (±1–2%) kan förekomma beroende på tidzonhantering.
 
 ---
 
@@ -330,18 +267,16 @@ crontab -e
 
 ```bash
 docker run --rm \
-  -e META_ACCESS_TOKEN="EAAiY..." \
-  -v "$(pwd)/weekly_reports:/app/weekly_reports" \
-  -v "$(pwd)/logs:/app/logs" \
-  python:3.11-slim \
-  python /app/fetch_facebook_reach_weekly.py
+  -v "$(pwd):/app" -w /app \
+  python:3.12-slim \
+  sh -c "pip install requests && python fetch_viewers.py --facebook --instagram --week"
 ```
 
 ### Windows — Task Scheduler
 
 1. Öppna **Aktivitetsschemaläggaren** → Skapa grundläggande uppgift
 2. Utlösare: **Veckovis**, måndag
-3. Åtgärd: `python C:\fbfetch\fetch_facebook_reach_weekly.py`
+3. Åtgärd: `python C:\fbfetch\fetch_viewers.py --facebook --instagram --week`
 
 ---
 
