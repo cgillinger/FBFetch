@@ -1,0 +1,7 @@
+requests>=2.32
+
+# Endast för fetch_instagram_posts.py och demographics.py
+pandas>=2.0
+
+# Endast för demographics.py (Excel-export)
+openpyxl>=3.1
