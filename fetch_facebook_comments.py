@@ -92,11 +92,11 @@ def check_token_expiry():
         
         logger.info(f"🔑 Token skapades för {days_since} dagar sedan ({days_left} dagar kvar till utgång).")
         
-        if days_left <= 7:
-            logger.warning(f"⚠️ VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
-        elif days_left <= 0:
+        if days_left <= 0:
             logger.error(f"❌ KRITISKT: Din token har gått ut! Skapa en ny token omedelbart.")
             return False
+        elif days_left <= 7:
+            logger.warning(f"⚠️ VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
         
         return True
     except Exception as e:
@@ -345,72 +345,42 @@ def get_posts_for_month(page_id, page_token, year, month):
     return all_posts
 
 def count_comments_on_post(post_id, page_token):
-    """Räkna kommentarer och replies på ett specifikt inlägg"""
+    """Räkna toppnivåkommentarer och replies på ett specifikt inlägg.
+
+    filter=toplevel ger enbart toppnivåkommentarer (filter=stream blandar in
+    replies i samma ström, vilket ger dubbelräkning), och comment_count på
+    varje kommentar anger antalet replies utan extra API-anrop.
+    """
     url = f"https://graph.facebook.com/{API_VERSION}/{post_id}/comments"
     params = {
         "access_token": page_token,
-        "summary": "true",
-        "filter": "stream",
+        "filter": "toplevel",
+        "fields": "comment_count",
         "limit": 100
     }
-    
+
     total_comments = 0
     total_replies = 0
-    
+
     while True:
         data = api_request(url, params)
-        
+
         if not data:
             break
-        
-        if "data" in data:
-            comments = data["data"]
-            total_comments += len(comments)
-            
-            # Räkna replies på varje kommentar
-            for comment in comments:
-                comment_id = comment.get("id")
-                if comment_id:
-                    reply_count = count_replies_on_comment(comment_id, page_token)
-                    total_replies += reply_count
-        
-        # Summary ger total count om tillgängligt
-        if "summary" in data and "total_count" in data["summary"]:
-            # Använd summary för snabbare räkning
-            total_comments = data["summary"]["total_count"]
-            break
-        
+
+        comments = data.get("data", [])
+        total_comments += len(comments)
+
+        for comment in comments:
+            total_replies += comment.get("comment_count") or 0
+
         # Pagination
         if "paging" in data and "next" in data["paging"]:
             url, params = _unpack_next_url(data["paging"]["next"])
         else:
             break
-    
-    return total_comments, total_replies
 
-def count_replies_on_comment(comment_id, page_token):
-    """Räkna replies (svar) på en specifik kommentar"""
-    url = f"https://graph.facebook.com/{API_VERSION}/{comment_id}/comments"
-    params = {
-        "access_token": page_token,
-        "summary": "true",
-        "limit": 100
-    }
-    
-    data = api_request(url, params)
-    
-    if not data:
-        return 0
-    
-    # Använd summary om tillgängligt
-    if "summary" in data and "total_count" in data["summary"]:
-        return data["summary"]["total_count"]
-    
-    # Annars räkna manuellt
-    if "data" in data:
-        return len(data["data"])
-    
-    return 0
+    return total_comments, total_replies
 
 def process_page_for_month(page_id, page_name, year, month):
     """Bearbeta en sida för en specifik månad och räkna kommentarer"""

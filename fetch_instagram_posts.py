@@ -138,11 +138,11 @@ def check_token_expiry():
         
         logger.info(f"Token skapades för {days_since} dagar sedan ({days_left} dagar kvar till utgång).")
         
-        if days_left <= 7:
-            logger.warning(f"VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
-        elif days_left <= 0:
+        if days_left <= 0:
             logger.error(f"KRITISKT: Din token har gått ut! Skapa en ny token omedelbart.")
             sys.exit(1)
+        elif days_left <= 7:
+            logger.warning(f"VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
     except Exception as e:
         logger.error(f"Kunde inte tolka TOKEN_LAST_UPDATED: {e}")
 
@@ -630,9 +630,12 @@ def attempt_server_side_filtering(instagram_id, since_epoch, until_epoch, displa
                     logger.error(f"    API-fel: {error_msg}")
                     return None
             else:
-                logger.warning(f"    Inget data returnerat")
-                break
-        
+                # api_request gav upp mitt i pagineringen — returnera None så
+                # att client-side fallback körs istället för att ett tyst
+                # ofullständigt resultat accepteras som komplett
+                logger.warning(f"    Inget data returnerat på sida {page_num} – går till fallback")
+                return None
+
         logger.info(f"  ✓ Server-side resultat för {display_name}:")
         logger.info(f"    • {posts_in_period} posts inom period")
         logger.info(f"    • {page_num} sidor paginerade")
@@ -985,8 +988,23 @@ def append_posts_to_csv(filename, posts_data):
     
     try:
         ensure_csv_with_headers(filename)
-        
-        sorted_posts = sorted(posts_data, 
+
+        # Hoppa över posts som redan finns i filen (annars ger t.ex.
+        # --update-all dubbletter eftersom vi öppnar i append-läge)
+        existing_ids = set()
+        with open(filename, "r", newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("Post_ID"):
+                    existing_ids.add(row["Post_ID"])
+
+        new_posts = [p for p in posts_data if p.get("Post_ID") not in existing_ids]
+        skipped = len(posts_data) - len(new_posts)
+        if skipped:
+            logger.info(f"Hoppar över {skipped} posts som redan finns i {filename}")
+        if not new_posts:
+            return 0
+
+        sorted_posts = sorted(new_posts,
                              key=lambda x: (x.get("Account", ""), x.get("Post_Date", "")))
         
         fieldnames = [

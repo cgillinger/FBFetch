@@ -155,11 +155,11 @@ def check_token_expiry():
         
         logger.info(f"🔑 Token skapades för {days_since} dagar sedan ({days_left} dagar kvar till utgång).")
         
-        if days_left <= 7:
-            logger.warning(f"⚠️ VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
-        elif days_left <= 0:
+        if days_left <= 0:
             logger.error(f"❌ KRITISKT: Din token har gått ut! Skapa en ny token omedelbart.")
             sys.exit(1)
+        elif days_left <= 7:
+            logger.warning(f"⚠️ VARNING: Din token går ut inom {days_left} dagar! Skapa en ny token snart.")
     except Exception as e:
         logger.error(f"⚠️ Kunde inte tolka TOKEN_LAST_UPDATED: {e}")
 

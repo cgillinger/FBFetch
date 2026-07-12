@@ -40,7 +40,7 @@ TOKEN_VALID_DAYS = 60              # Meta-token är normalt giltig i 60 dagar
 # =====================================================================
 # 3. API OCH PRESTANDA-INSTÄLLNINGAR
 # =====================================================================
-API_VERSION = "v19.0"           # Facebook Graph API-version
+API_VERSION = "v22.0"           # Facebook Graph API-version (v22.0+ krävs för korrekt Views-data från Instagram Reels)
 CACHE_FILE = "page_names.json"  # Cache för sidnamn
 BATCH_SIZE = 10                 # Antal sidor att bearbeta samtidigt
 MAX_RETRIES = 3                 # Antal försök innan vi ger upp
